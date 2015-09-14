@@ -27,31 +27,35 @@
  *                                  Harmish Khambhaita on Sat Sep 12 2015
  */
 
- // defining constants
- #define NODE_NAME "human_pose_prediction"
+// defining constants
+#define NODE_NAME "human_pose_prediction"
 
- #define HUMAN_SUB_TOPIC "humans"
- #define PREDICT_SERVICE_NAME "predict_humans"
+#define HUMAN_SUB_TOPIC "humans"
+#define PREDICT_SERVICE_NAME "predict_2d_human_poses"
 
- #define DEFAULT_PREDICT_TIME 2.0 // seconds, time for predicting human position
- #define LOWER_SCALE 0.8 // human slow-down velocity multiplier
- #define HIGHER_SCALE 1.2 // human speed-up velocity multiplier
- #define ANGLE 0.1 // deviation angle for human position predictions
+#define DEFAULT_PREDICT_TIME 2.0 // seconds, time for predicting human position
+#define LOWER_SCALE 0.8 // human slow-down velocity multiplier
+#define HIGHER_SCALE 1.2 // human speed-up velocity multiplier
+#define ANGLE 0.1 // deviation angle for human position predictions
 
- #include <signal.h>
+#include <signal.h>
 
- #include <hanp_prediction/human_pose_prediction.h>
+#include <hanp_prediction/human_pose_prediction.h>
 
- namespace hanp_prediction
- {
-     // empty constructor and destructor
-     HumanPosePrediction::HumanPosePrediction() {}
-     HumanPosePrediction::~HumanPosePrediction() {}
+namespace hanp_prediction
+{
+    // empty constructor and destructor
+    HumanPosePrediction::HumanPosePrediction() {}
+    HumanPosePrediction::~HumanPosePrediction() {}
 
     void HumanPosePrediction::initialize()
     {
         // get private node handle
         ros::NodeHandle private_nh("~/");
+
+        // get parameters
+        private_nh.param("human_sub_topic", human_sub_topic_, std::string(HUMAN_SUB_TOPIC));
+        private_nh.param("predict_service_name", predict_service_name_, std::string(PREDICT_SERVICE_NAME));
 
         // initialize subscribers and publishers
         humans_sub_ = private_nh.subscribe(HUMAN_SUB_TOPIC, 1, &HumanPosePrediction::trackedHumansCB, this);
@@ -66,7 +70,9 @@
         dsrv_->setCallback(cb);
 
         // initialize services
-        predict_humans_srv_ = private_nh.advertiseService(PREDICT_SERVICE_NAME, &HumanPosePrediction::predictHumanPoses, this);
+        predict_humans_server_ = private_nh.advertiseService(PREDICT_SERVICE_NAME, &HumanPosePrediction::predictHumans, this);
+
+        ROS_DEBUG_NAMED(NODE_NAME, "node %s initialized", NODE_NAME);
     }
 
     void HumanPosePrediction::setParams(std::vector<double> predict_scales, double predict_angle)
@@ -74,7 +80,7 @@
         predict_scales_ = predict_scales;
         predict_angle_ = predict_angle;
 
-        ROS_DEBUG_NAMED("human_pose_prediction", "parameters set: "
+        ROS_DEBUG_NAMED(NODE_NAME, "parameters set: "
         "predict_scales=[%f, %f, %f], predict_angle=%f",
         predict_scales_[0], predict_scales_[1], predict_scales_[2], predict_angle_);
     }
@@ -87,12 +93,60 @@
 
     void HumanPosePrediction::trackedHumansCB(const hanp_msgs::TrackedHumans& tracked_humans)
     {
-
+        humans_ = tracked_humans;
     }
 
-    bool HumanPosePrediction::predictHumanPoses(hanp_prediction::PredictHumanPoses::Request& req,
-        hanp_prediction::PredictHumanPoses::Response& res)
+    bool HumanPosePrediction::predictHumans(hanp_prediction::HumanPosePredict::Request& req,
+        hanp_prediction::HumanPosePredict::Response& res)
     {
+        // validate prediction time
+        if(req.predict_time < 0)
+        {
+            ROS_ERROR_NAMED(NODE_NAME, "prediction time cannot be negative (give %f)", req.predict_time);
+            return false;
+        }
+
+        res.header.stamp = humans_.header.stamp;
+        res.header.frame_id = humans_.header.frame_id;
+
+        // get local refrence of humans
+        auto humans = humans_.tracks;
+
+        for(auto human : humans)
+        {
+            // TODO: filter by res.ids
+
+            // get linear velocity of the human
+            tf::Vector3 linear_vel(human.twist.twist.linear.x, human.twist.twist.linear.y, human.twist.twist.linear.z);
+
+            // calculate variations in velocity of human
+            std::vector<tf::Vector3> vel_variations;
+            for(auto vel_scale : predict_scales_)
+            {
+                vel_variations.push_back(linear_vel.rotate(tf::Vector3(0, 0, 1), predict_angle_) * vel_scale);
+                vel_variations.push_back(linear_vel.rotate(tf::Vector3(0, 0, 1), -predict_angle_) * vel_scale);
+            }
+
+            // calculate future human poses based on velocity variations
+            hanp_prediction::PredictedPoses predicted_poses;
+            predicted_poses.track_id = human.track_id;
+            for(auto vel : vel_variations)
+            {
+                geometry_msgs::Pose2D predicted_pose;
+                predicted_pose.x = human.pose.pose.position.x + vel[0] * req.predict_time;
+                predicted_pose.y = human.pose.pose.position.y + vel[1] * req.predict_time;
+                predicted_pose.theta = tf::getYaw(human.pose.pose.orientation);
+                predicted_poses.poses.push_back(predicted_pose);
+
+                ROS_DEBUG_NAMED(NODE_NAME, "predected human (%d)"
+                    " pose: x=%f, y=%f, theta=%f with vel scale %f",
+                    human.track_id, predicted_pose.x, predicted_pose.y,
+                    predicted_pose.theta, vel);
+            }
+
+            res.predicted_humans.push_back(predicted_poses);
+        }
+
         return true;
     }
 }
@@ -100,7 +154,7 @@
 // handler for something to do before killing the node
 void sigintHandler(int sig)
 {
-    ROS_DEBUG_STREAM_NAMED(NODE_NAME, "node will now shutdown");
+    ROS_DEBUG_NAMED(NODE_NAME, "node %s will now shutdown", NODE_NAME);
 
     // the default sigint handler, it calls shutdown() on node
     ros::shutdown();
@@ -111,10 +165,11 @@ int main(int argc, char **argv)
 {
     // starting the optotrack_person node
     ros::init(argc, argv, NODE_NAME);
-    ROS_DEBUG_STREAM_NAMED(NODE_NAME, "started " << NODE_NAME << " node");
+    ROS_DEBUG_NAMED(NODE_NAME, "started %s node", NODE_NAME);
 
     // initiazling HANPHeadBehavior class
-    hanp_prediction::HumanPosePrediction HumanPosePrediction();
+    hanp_prediction::HumanPosePrediction HumanPosePrediction;
+    HumanPosePrediction.initialize();
 
     // look for sigint and start spinning the node
     signal(SIGINT, sigintHandler);

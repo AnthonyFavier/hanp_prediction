@@ -36,7 +36,8 @@
 #include <hanp_prediction/HumanPosePredictionConfig.h>
 
 #include <hanp_msgs/TrackedHumans.h>
-#include <hanp_prediction/PredictHumanPoses.h>
+#include <hanp_prediction/HumanPosePredict.h>
+#include <tf/transform_listener.h>
 
 namespace hanp_prediction
 {
@@ -55,7 +56,7 @@ namespace hanp_prediction
         ros::Subscriber humans_sub_;
 
         // ros services
-        ros::ServiceServer predict_humans_srv_;
+        ros::ServiceServer predict_humans_server_;
 
         // dynamic reconfigure variables
         dynamic_reconfigure::Server<HumanPosePredictionConfig> *dsrv_;
@@ -64,11 +65,14 @@ namespace hanp_prediction
         // subscriber callbacks
         void trackedHumansCB(const hanp_msgs::TrackedHumans& tracked_humans);
 
-        bool predictHumanPoses(hanp_prediction::PredictHumanPoses::Request& req,
-            hanp_prediction::PredictHumanPoses::Response& res);
+        std::string human_sub_topic_, predict_service_name_;
 
+        hanp_msgs::TrackedHumans humans_;
         std::vector<double> predict_scales_;
         double predict_angle_;
+
+        bool predictHumans(hanp_prediction::HumanPosePredict::Request& req,
+            hanp_prediction::HumanPosePredict::Response& res);
     };
 }
 

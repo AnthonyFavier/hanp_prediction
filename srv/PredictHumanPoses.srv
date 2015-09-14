@@ -1,6 +1,0 @@
-#request fields
-float64 predict_time
-int64[] ids
----
-#response fields
-hanp_prediction/PredictedPoses[] predicted_humans

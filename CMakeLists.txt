@@ -27,7 +27,7 @@ add_message_files( DIRECTORY msg
 
 add_service_files( DIRECTORY srv
   FILES
-    PredictHumanPoses.srv
+    HumanPosePredict.srv
 )
 
 # add_action_files( DIRECTORY action

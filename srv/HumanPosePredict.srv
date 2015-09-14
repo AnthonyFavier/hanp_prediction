@@ -1,0 +1,7 @@
+#request fields
+float64                             predict_time
+int64[]                             ids
+---
+#response fields
+Header                              header
+hanp_prediction/PredictedPoses[]    predicted_humans
