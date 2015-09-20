@@ -73,6 +73,10 @@ namespace hanp_prediction
 
         bool predictHumans(hanp_prediction::HumanPosePredict::Request& req,
             hanp_prediction::HumanPosePredict::Response& res);
+        bool predictHumansVelScale(hanp_prediction::HumanPosePredict::Request& req,
+            hanp_prediction::HumanPosePredict::Response& res);
+        bool predictHumansVelObs(hanp_prediction::HumanPosePredict::Request& req,
+            hanp_prediction::HumanPosePredict::Response& res);
     };
 }
 

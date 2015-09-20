@@ -99,10 +99,38 @@ namespace hanp_prediction
     bool HumanPosePrediction::predictHumans(hanp_prediction::HumanPosePredict::Request& req,
         hanp_prediction::HumanPosePredict::Response& res)
     {
-        // validate prediction time
-        if(req.predict_time < 0)
+        boost::function<bool(hanp_prediction::HumanPosePredict::Request& req,
+            hanp_prediction::HumanPosePredict::Response& res)> prediction_function;
+
+        switch(req.type)
         {
-            ROS_ERROR_NAMED(NODE_NAME, "prediction time cannot be negative (give %f)", req.predict_time);
+            case hanp_prediction::HumanPosePredictRequest::VELOCITY_SCALE:
+                prediction_function = boost::bind(&HumanPosePrediction::predictHumansVelScale, this, _1, _2);
+                break;
+            case hanp_prediction::HumanPosePredictRequest::VELOCITY_OBSTACLE:
+                prediction_function = boost::bind(&HumanPosePrediction::predictHumansVelObs, this, _1, _2);
+                break;
+            default:
+                ROS_ERROR_NAMED(NODE_NAME, "%s: unkonwn prediction type %d", NODE_NAME, req.type);
+        }
+
+        if(!prediction_function.empty())
+        {
+            return prediction_function(req, res);
+        }
+        else
+        {
+            return false;
+        }
+    }
+
+    bool HumanPosePrediction::predictHumansVelScale(hanp_prediction::HumanPosePredict::Request& req,
+        hanp_prediction::HumanPosePredict::Response& res)
+    {
+        // validate prediction time
+        if((req.predict_times.size() < 1) || (req.predict_times[0] < 0))
+        {
+            ROS_ERROR_NAMED(NODE_NAME, "prediction time cannot be negative (give %f)", req.predict_times[0]);
             return false;
         }
 
@@ -132,16 +160,65 @@ namespace hanp_prediction
             predicted_poses.track_id = human.track_id;
             for(auto vel : vel_variations)
             {
-                geometry_msgs::Pose2D predicted_pose;
-                predicted_pose.x = human.pose.pose.position.x + vel[0] * req.predict_time;
-                predicted_pose.y = human.pose.pose.position.y + vel[1] * req.predict_time;
-                predicted_pose.theta = tf::getYaw(human.pose.pose.orientation);
+                hanp_prediction::PredictedPose predicted_pose;
+                predicted_pose.pose2d.x = human.pose.pose.position.x + vel[0] * req.predict_times[0];
+                predicted_pose.pose2d.y = human.pose.pose.position.y + vel[1] * req.predict_times[0];
+                predicted_pose.pose2d.theta = tf::getYaw(human.pose.pose.orientation);
+                predicted_pose.radius = 0.0;
                 predicted_poses.poses.push_back(predicted_pose);
 
                 ROS_DEBUG_NAMED(NODE_NAME, "predected human (%d)"
                     " pose: x=%f, y=%f, theta=%f with vel scale %f",
-                    human.track_id, predicted_pose.x, predicted_pose.y,
-                    predicted_pose.theta, vel);
+                    human.track_id, predicted_pose.pose2d.x, predicted_pose.pose2d.y,
+                    predicted_pose.pose2d.theta, vel);
+            }
+
+            res.predicted_humans.push_back(predicted_poses);
+        }
+
+        return true;
+    }
+
+    bool HumanPosePrediction::predictHumansVelObs(hanp_prediction::HumanPosePredict::Request& req,
+        hanp_prediction::HumanPosePredict::Response& res)
+    {
+        res.header.stamp = humans_.header.stamp;
+        res.header.frame_id = humans_.header.frame_id;
+
+        // get local refrence of humans
+        auto humans = humans_.tracks;
+
+        for(auto human : humans)
+        {
+            // TODO: filter by res.ids
+
+            // get linear velocity of the human
+            tf::Vector3 linear_vel(human.twist.twist.linear.x, human.twist.twist.linear.y, human.twist.twist.linear.z);
+
+            // calculate future human poses based on current velocity
+            hanp_prediction::PredictedPoses predicted_poses;
+            predicted_poses.track_id = human.track_id;
+
+            for(auto predict_time : req.predict_times)
+            {
+                // validate prediction time
+                if(predict_time < 0)
+                {
+                    ROS_ERROR_NAMED(NODE_NAME, "%s: prediction time cannot be negative (give %f)",
+                        NODE_NAME, predict_time);
+                    return false;
+                }
+                hanp_prediction::PredictedPose predicted_pose;
+                predicted_pose.pose2d.x = human.pose.pose.position.x * predict_time;
+                predicted_pose.pose2d.y = human.pose.pose.position.y * predict_time;
+                predicted_pose.pose2d.theta = tf::getYaw(human.pose.pose.orientation);
+                predicted_pose.radius = 0.0;
+                predicted_poses.poses.push_back(predicted_pose);
+
+                ROS_DEBUG_NAMED(NODE_NAME, "%s: predected human (%d)"
+                    " pose: x=%f, y=%f, theta=%f, predict-time=%f", NODE_NAME, human.track_id,
+                    predicted_pose.pose2d.x, predicted_pose.pose2d.y, predicted_pose.pose2d.theta,
+                    predict_time);
             }
 
             res.predicted_humans.push_back(predicted_poses);
