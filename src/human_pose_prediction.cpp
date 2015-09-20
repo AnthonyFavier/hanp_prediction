@@ -38,6 +38,10 @@
 #define HIGHER_SCALE 1.2 // human speed-up velocity multiplier
 #define ANGLE 0.1 // deviation angle for human position predictions
 
+#define MIN_VELOBS_RADIUS 0.25 // meters
+#define MAX_VELOBS_RADIUS 1.25 // meters
+#define MAX_VELOBS_RADIUS_TIME 4.0 // seconds
+
 #include <signal.h>
 
 #include <hanp_prediction/human_pose_prediction.h>
@@ -212,7 +216,7 @@ namespace hanp_prediction
                 predicted_pose.pose2d.x = human.pose.pose.position.x * predict_time;
                 predicted_pose.pose2d.y = human.pose.pose.position.y * predict_time;
                 predicted_pose.pose2d.theta = tf::getYaw(human.pose.pose.orientation);
-                predicted_pose.radius = 0.0;
+                predicted_pose.radius = MIN_VELOBS_RADIUS + (MAX_VELOBS_RADIUS - MIN_VELOBS_RADIUS) * MAX_VELOBS_RADIUS / predict_time;
                 predicted_poses.poses.push_back(predicted_pose);
 
                 ROS_DEBUG_NAMED(NODE_NAME, "%s: predected human (%d)"
