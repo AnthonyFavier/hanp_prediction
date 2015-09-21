@@ -33,15 +33,6 @@
 #define HUMAN_SUB_TOPIC "humans"
 #define PREDICT_SERVICE_NAME "predict_2d_human_poses"
 
-#define DEFAULT_PREDICT_TIME 2.0 // seconds, time for predicting human position
-#define LOWER_SCALE 0.8 // human slow-down velocity multiplier
-#define HIGHER_SCALE 1.2 // human speed-up velocity multiplier
-#define ANGLE 0.1 // deviation angle for human position predictions
-
-#define MIN_VELOBS_RADIUS 0.25 // meters
-#define MAX_VELOBS_RADIUS 1.25 // meters
-#define MAX_VELOBS_RADIUS_TIME 4.0 // seconds
-
 #include <signal.h>
 
 #include <hanp_prediction/human_pose_prediction.h>
@@ -64,10 +55,6 @@ namespace hanp_prediction
         // initialize subscribers and publishers
         humans_sub_ = private_nh.subscribe(HUMAN_SUB_TOPIC, 1, &HumanPosePrediction::trackedHumansCB, this);
 
-        // set default parameters
-        std::vector<double> predict_scales = {LOWER_SCALE, 1.0, HIGHER_SCALE};
-        setParams(predict_scales, ANGLE);
-
         // set-up dynamic reconfigure
         dsrv_ = new dynamic_reconfigure::Server<HumanPosePredictionConfig>(private_nh);
         dynamic_reconfigure::Server<HumanPosePredictionConfig>::CallbackType cb = boost::bind(&HumanPosePrediction::reconfigureCB, this, _1, _2);
@@ -79,20 +66,25 @@ namespace hanp_prediction
         ROS_DEBUG_NAMED(NODE_NAME, "node %s initialized", NODE_NAME);
     }
 
-    void HumanPosePrediction::setParams(std::vector<double> predict_scales, double predict_angle)
+    void HumanPosePrediction::setParams(std::vector<double> velscale_scales, double velscale_angle,
+        double velobs_min_rad, double velobs_max_rad, double velobs_max_rad_time)
     {
-        predict_scales_ = predict_scales;
-        predict_angle_ = predict_angle;
+        velscale_scales_ = velscale_scales;
+        velscale_angle_ = velscale_angle;
+        velobs_min_rad_ = velobs_min_rad;
+        velobs_max_rad_ = velobs_max_rad;
+        velobs_max_rad_time_ = velobs_max_rad_time;
 
-        ROS_DEBUG_NAMED(NODE_NAME, "parameters set: "
-        "predict_scales=[%f, %f, %f], predict_angle=%f",
-        predict_scales_[0], predict_scales_[1], predict_scales_[2], predict_angle_);
+        ROS_DEBUG_NAMED(NODE_NAME, "parameters set: velocity-scale: scales=[%f, %f, %f], angle=%f"
+        "velocity-obstacle: min-radius:%f, max-radius:%f, max-radius-time=%f",
+        velscale_scales_[0], velscale_scales_[1], velscale_scales_[2], velscale_angle_,
+        velobs_min_rad_, velobs_max_rad_, velobs_max_rad_time_);
     }
 
     void HumanPosePrediction::reconfigureCB(HumanPosePredictionConfig &config, uint32_t level)
     {
-        setParams({config.scale_lower, config.scale_nominal, config.scale_higher},
-            config.angle);
+        setParams({config.velscale_lower, config.velscale_nominal, config.velscale_higher}, config.velscale_angle,
+            config.velobs_min_rad, config.velobs_max_rad, config.velobs_max_rad_time);
     }
 
     void HumanPosePrediction::trackedHumansCB(const hanp_msgs::TrackedHumans& tracked_humans)
@@ -153,10 +145,10 @@ namespace hanp_prediction
 
             // calculate variations in velocity of human
             std::vector<tf::Vector3> vel_variations;
-            for(auto vel_scale : predict_scales_)
+            for(auto vel_scale : velscale_scales_)
             {
-                vel_variations.push_back(linear_vel.rotate(tf::Vector3(0, 0, 1), predict_angle_) * vel_scale);
-                vel_variations.push_back(linear_vel.rotate(tf::Vector3(0, 0, 1), -predict_angle_) * vel_scale);
+                vel_variations.push_back(linear_vel.rotate(tf::Vector3(0, 0, 1), velscale_angle_) * vel_scale);
+                vel_variations.push_back(linear_vel.rotate(tf::Vector3(0, 0, 1), -velscale_angle_) * vel_scale);
             }
 
             // calculate future human poses based on velocity variations
@@ -196,12 +188,16 @@ namespace hanp_prediction
         {
             // TODO: filter by res.ids
 
-            // get linear velocity of the human
-            tf::Vector3 linear_vel(human.twist.twist.linear.x, human.twist.twist.linear.y, human.twist.twist.linear.z);
+            ROS_DEBUG_NAMED(NODE_NAME, "%s: predecting human (%d) at"
+                " pose: x=%f, y=%f, theta=%f", NODE_NAME, human.track_id, human.pose.pose.position.x,
+                human.pose.pose.position.y, tf::getYaw(human.pose.pose.orientation));
 
             // calculate future human poses based on current velocity
             hanp_prediction::PredictedPoses predicted_poses;
             predicted_poses.track_id = human.track_id;
+
+            // get linear velocity of the human
+            tf::Vector3 linear_vel(human.twist.twist.linear.x, human.twist.twist.linear.y, human.twist.twist.linear.z);
 
             for(auto predict_time : req.predict_times)
             {
@@ -212,17 +208,18 @@ namespace hanp_prediction
                         NODE_NAME, predict_time);
                     return false;
                 }
+
                 hanp_prediction::PredictedPose predicted_pose;
-                predicted_pose.pose2d.x = human.pose.pose.position.x * predict_time;
-                predicted_pose.pose2d.y = human.pose.pose.position.y * predict_time;
+                predicted_pose.pose2d.x = human.pose.pose.position.x + linear_vel[0] * predict_time;
+                predicted_pose.pose2d.y = human.pose.pose.position.y + linear_vel[1] * predict_time;
                 predicted_pose.pose2d.theta = tf::getYaw(human.pose.pose.orientation);
-                predicted_pose.radius = MIN_VELOBS_RADIUS + (MAX_VELOBS_RADIUS - MIN_VELOBS_RADIUS) * MAX_VELOBS_RADIUS / predict_time;
+                predicted_pose.radius = velobs_min_rad_ + (velobs_max_rad_ - velobs_min_rad_)
+                    * (predict_time / velobs_max_rad_time_);
                 predicted_poses.poses.push_back(predicted_pose);
 
                 ROS_DEBUG_NAMED(NODE_NAME, "%s: predected human (%d)"
                     " pose: x=%f, y=%f, theta=%f, predict-time=%f", NODE_NAME, human.track_id,
-                    predicted_pose.pose2d.x, predicted_pose.pose2d.y, predicted_pose.pose2d.theta,
-                    predict_time);
+                    predicted_pose.pose2d.x, predicted_pose.pose2d.y, predicted_pose.pose2d.theta, predict_time);
             }
 
             res.predicted_humans.push_back(predicted_poses);
