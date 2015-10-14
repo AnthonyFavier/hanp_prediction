@@ -66,24 +66,28 @@ namespace hanp_prediction
         ROS_DEBUG_NAMED(NODE_NAME, "node %s initialized", NODE_NAME);
     }
 
-    void HumanPosePrediction::setParams(std::vector<double> velscale_scales, double velscale_angle,
+    void HumanPosePrediction::setParams(std::vector<double> velscale_scales,
+        double velscale_angle, double velscale_reduce,
         double velobs_min_rad, double velobs_max_rad, double velobs_max_rad_time)
     {
         velscale_scales_ = velscale_scales;
         velscale_angle_ = velscale_angle;
+        velscale_reduce_ = velscale_reduce;
         velobs_min_rad_ = velobs_min_rad;
         velobs_max_rad_ = velobs_max_rad;
         velobs_max_rad_time_ = velobs_max_rad_time;
 
         ROS_DEBUG_NAMED(NODE_NAME, "parameters set: velocity-scale: scales=[%f, %f, %f], angle=%f"
         "velocity-obstacle: min-radius:%f, max-radius:%f, max-radius-time=%f",
-        velscale_scales_[0], velscale_scales_[1], velscale_scales_[2], velscale_angle_,
+        velscale_scales_[0], velscale_scales_[1], velscale_scales_[2],
+        velscale_angle_, velscale_reduce_,
         velobs_min_rad_, velobs_max_rad_, velobs_max_rad_time_);
     }
 
     void HumanPosePrediction::reconfigureCB(HumanPosePredictionConfig &config, uint32_t level)
     {
-        setParams({config.velscale_lower, config.velscale_nominal, config.velscale_higher}, config.velscale_angle,
+        setParams({config.velscale_lower, config.velscale_nominal, config.velscale_higher},
+            config.velscale_angle, config.velscale_reduce,
             config.velobs_min_rad, config.velobs_max_rad, config.velobs_max_rad_time);
     }
 
@@ -210,11 +214,13 @@ namespace hanp_prediction
                 }
 
                 hanp_prediction::PredictedPose predicted_pose;
-                predicted_pose.pose2d.x = human.pose.pose.position.x + linear_vel[0] * predict_time;
-                predicted_pose.pose2d.y = human.pose.pose.position.y + linear_vel[1] * predict_time;
+                tf::Vector3 predict_lin_vel(linear_vel * (predict_time / velscale_reduce_));
+                predicted_pose.pose2d.x = human.pose.pose.position.x + predict_lin_vel[0];
+                predicted_pose.pose2d.y = human.pose.pose.position.y + predict_lin_vel[1];
                 predicted_pose.pose2d.theta = tf::getYaw(human.pose.pose.orientation);
+                double xy_vel = hypot(predict_lin_vel[0], predict_lin_vel[1]);
                 predicted_pose.radius = velobs_min_rad_ + (velobs_max_rad_ - velobs_min_rad_)
-                    * (predict_time / velobs_max_rad_time_);
+                    * (predict_time / velobs_max_rad_time_) * xy_vel;
                 predicted_poses.poses.push_back(predicted_pose);
 
                 ROS_DEBUG_NAMED(NODE_NAME, "%s: predected human (%d)"

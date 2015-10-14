@@ -49,7 +49,8 @@ namespace hanp_prediction
 
         void initialize();
 
-        void setParams(std::vector<double> velscale_scales, double velscale_angle,
+        void setParams(std::vector<double> velscale_scales,
+            double velscale_angle, double velscale_reduce,
             double velobs_min_rad, double velobs_max_rad, double velobs_max_rad_time);
 
     private:
@@ -70,7 +71,8 @@ namespace hanp_prediction
 
         hanp_msgs::TrackedHumans humans_;
         std::vector<double> velscale_scales_;
-        double velscale_angle_, velobs_min_rad_, velobs_max_rad_, velobs_max_rad_time_;
+        double velscale_angle_, velscale_reduce_,
+            velobs_min_rad_, velobs_max_rad_, velobs_max_rad_time_;
 
         bool predictHumans(hanp_prediction::HumanPosePredict::Request& req,
             hanp_prediction::HumanPosePredict::Response& res);
