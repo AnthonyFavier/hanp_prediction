@@ -39,6 +39,8 @@
 #include <hanp_prediction/HumanPosePredict.h>
 #include <tf/transform_listener.h>
 
+#include <visualization_msgs/MarkerArray.h>
+
 namespace hanp_prediction
 {
     class HumanPosePrediction
@@ -56,6 +58,7 @@ namespace hanp_prediction
     private:
         // ros subscribers and publishers
         ros::Subscriber humans_sub_;
+        ros::Publisher predicted_humans_pub_;
 
         // ros services
         ros::ServiceServer predict_humans_server_;
@@ -67,12 +70,13 @@ namespace hanp_prediction
         // subscriber callbacks
         void trackedHumansCB(const hanp_msgs::TrackedHumans& tracked_humans);
 
-        std::string human_sub_topic_, predict_service_name_;
+        std::string humans_sub_topic_, predict_service_name_, predicted_humans_markers_pub_topic_;
 
         hanp_msgs::TrackedHumans humans_;
         std::vector<double> velscale_scales_;
         double velscale_angle_, velscale_reduce_,
             velobs_min_rad_, velobs_max_rad_, velobs_max_rad_time_;
+        visualization_msgs::MarkerArray predicted_humans_markers_;
 
         bool predictHumans(hanp_prediction::HumanPosePredict::Request& req,
             hanp_prediction::HumanPosePredict::Response& res);

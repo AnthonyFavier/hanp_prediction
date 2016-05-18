@@ -30,8 +30,9 @@
 // defining constants
 #define NODE_NAME "human_pose_prediction"
 
-#define HUMAN_SUB_TOPIC "humans"
+#define HUMANS_SUB_TOPIC "humans"
 #define PREDICT_SERVICE_NAME "predict_2d_human_poses"
+#define PREDICTED_HUMANS_MARKERS_PUB_TOPIC "predicted_human_poses"
 
 #include <signal.h>
 
@@ -49,11 +50,13 @@ namespace hanp_prediction
         ros::NodeHandle private_nh("~/");
 
         // get parameters
-        private_nh.param("human_sub_topic", human_sub_topic_, std::string(HUMAN_SUB_TOPIC));
+        private_nh.param("humans_sub_topic", humans_sub_topic_, std::string(HUMANS_SUB_TOPIC));
         private_nh.param("predict_service_name", predict_service_name_, std::string(PREDICT_SERVICE_NAME));
+        private_nh.param("predicted_humans_markers_pub_topic", predicted_humans_markers_pub_topic_, std::string(PREDICTED_HUMANS_MARKERS_PUB_TOPIC));
 
         // initialize subscribers and publishers
-        humans_sub_ = private_nh.subscribe(HUMAN_SUB_TOPIC, 1, &HumanPosePrediction::trackedHumansCB, this);
+        humans_sub_ = private_nh.subscribe(humans_sub_topic_, 1, &HumanPosePrediction::trackedHumansCB, this);
+        predicted_humans_pub_ = private_nh.advertise<visualization_msgs::MarkerArray>(predicted_humans_markers_pub_topic_, 1);
 
         // set-up dynamic reconfigure
         dsrv_ = new dynamic_reconfigure::Server<HumanPosePredictionConfig>(private_nh);
@@ -61,7 +64,7 @@ namespace hanp_prediction
         dsrv_->setCallback(cb);
 
         // initialize services
-        predict_humans_server_ = private_nh.advertiseService(PREDICT_SERVICE_NAME, &HumanPosePrediction::predictHumans, this);
+        predict_humans_server_ = private_nh.advertiseService(predict_service_name_, &HumanPosePrediction::predictHumans, this);
 
         ROS_DEBUG_NAMED(NODE_NAME, "node %s initialized", NODE_NAME);
     }
@@ -114,9 +117,51 @@ namespace hanp_prediction
                 ROS_ERROR_NAMED(NODE_NAME, "%s: unkonwn prediction type %d", NODE_NAME, req.type);
         }
 
-        if(!prediction_function.empty())
+        if(!prediction_function.empty() && prediction_function(req, res))
         {
-            return prediction_function(req, res);
+            if(req.publish_markers)
+            {
+                // delete all previous markers
+                predicted_humans_markers_.markers.clear();
+                visualization_msgs::Marker delete_human;
+                delete_human.action = 3; // visualization_msgs::Marker::DELETEALL
+                predicted_humans_markers_.markers.push_back(delete_human);
+                predicted_humans_pub_.publish(predicted_humans_markers_);
+
+                // create new markers
+                int marker_id = 0;
+                predicted_humans_markers_.markers.clear();
+
+                for(auto predicted_human : res.predicted_humans)
+                {
+                    for(auto predicted_human_pose : predicted_human.poses)
+                    {
+                        visualization_msgs::Marker predicted_human_marker;
+                        predicted_human_marker.header.frame_id = res.header.frame_id;
+                        predicted_human_marker.header.stamp = res.header.stamp;
+                        predicted_human_marker.id = marker_id++;
+                        predicted_human_marker.type = visualization_msgs::Marker::CYLINDER;
+                        predicted_human_marker.action = visualization_msgs::Marker::ADD;
+                        predicted_human_marker.scale.x = predicted_human_pose.radius;
+                        predicted_human_marker.scale.y = predicted_human_pose.radius;
+                        predicted_human_marker.scale.z = 0.01;
+                        predicted_human_marker.color.a = 1.0;
+                        predicted_human_marker.color.r = 0.0;
+                        predicted_human_marker.color.g = 0.0;
+                        predicted_human_marker.color.b = 1.0;
+                        predicted_human_marker.lifetime = ros::Duration(req.predict_times.back());
+                        predicted_human_marker.pose.position.x = predicted_human_pose.pose2d.x;
+                        predicted_human_marker.pose.position.y = predicted_human_pose.pose2d.y;
+                        predicted_humans_markers_.markers.push_back(predicted_human_marker);
+                    }
+                }
+
+                predicted_humans_pub_.publish(predicted_humans_markers_);
+
+                ROS_DEBUG_NAMED(NODE_NAME, "published predicted humans");
+            }
+
+            return true;
         }
         else
         {
