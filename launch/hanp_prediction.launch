@@ -1,6 +1,6 @@
 <launch>
     <node pkg="hanp_prediction" type="human_pose_prediction" name="human_pose_prediction" output="screen">
-        <!-- <remap from="/human_pose_prediction/humans" to="/tracked_humans"/> -->
+        <!-- <remap from="/human_pose_prediction/tracked_humans" to="/tracked_humans"/> -->
         <!-- <param name="velscale_reduce" value="2.0"/> -->
     </node>
 </launch>

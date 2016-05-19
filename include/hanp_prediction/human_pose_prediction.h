@@ -57,7 +57,7 @@ namespace hanp_prediction
 
     private:
         // ros subscribers and publishers
-        ros::Subscriber humans_sub_;
+        ros::Subscriber tracked_humans_sub_;
         ros::Publisher predicted_humans_pub_;
 
         // ros services
@@ -70,9 +70,10 @@ namespace hanp_prediction
         // subscriber callbacks
         void trackedHumansCB(const hanp_msgs::TrackedHumans& tracked_humans);
 
-        std::string humans_sub_topic_, predict_service_name_, predicted_humans_markers_pub_topic_;
+        std::string tracked_humans_sub_topic_, predict_service_name_,
+            predicted_humans_markers_pub_topic_, default_human_part_;
 
-        hanp_msgs::TrackedHumans humans_;
+        hanp_msgs::TrackedHumans tracked_humans_;
         std::vector<double> velscale_scales_;
         double velscale_angle_, velscale_reduce_,
             velobs_min_rad_, velobs_max_rad_, velobs_max_rad_time_;

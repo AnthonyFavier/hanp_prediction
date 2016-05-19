@@ -30,9 +30,10 @@
 // defining constants
 #define NODE_NAME "human_pose_prediction"
 
-#define HUMANS_SUB_TOPIC "humans"
+#define HUMANS_SUB_TOPIC "tracked_humans"
 #define PREDICT_SERVICE_NAME "predict_2d_human_poses"
 #define PREDICTED_HUMANS_MARKERS_PUB_TOPIC "predicted_human_poses"
+#define DEFAULT_HUMAN_PART "torso"
 
 #include <signal.h>
 
@@ -50,12 +51,18 @@ namespace hanp_prediction
         ros::NodeHandle private_nh("~/");
 
         // get parameters
-        private_nh.param("humans_sub_topic", humans_sub_topic_, std::string(HUMANS_SUB_TOPIC));
-        private_nh.param("predict_service_name", predict_service_name_, std::string(PREDICT_SERVICE_NAME));
-        private_nh.param("predicted_humans_markers_pub_topic", predicted_humans_markers_pub_topic_, std::string(PREDICTED_HUMANS_MARKERS_PUB_TOPIC));
+        private_nh.param("tracked_humans_sub_topic", tracked_humans_sub_topic_,
+            std::string(HUMANS_SUB_TOPIC));
+        private_nh.param("predict_service_name", predict_service_name_,
+            std::string(PREDICT_SERVICE_NAME));
+        private_nh.param("predicted_humans_markers_pub_topic", predicted_humans_markers_pub_topic_,
+            std::string(PREDICTED_HUMANS_MARKERS_PUB_TOPIC));
+        private_nh.param("default_human_part", default_human_part_,
+            std::string(DEFAULT_HUMAN_PART));
 
         // initialize subscribers and publishers
-        humans_sub_ = private_nh.subscribe(humans_sub_topic_, 1, &HumanPosePrediction::trackedHumansCB, this);
+        tracked_humans_sub_ = private_nh.subscribe(tracked_humans_sub_topic_, 1,
+            &HumanPosePrediction::trackedHumansCB, this);
         predicted_humans_pub_ = private_nh.advertise<visualization_msgs::MarkerArray>(predicted_humans_markers_pub_topic_, 1);
 
         // set-up dynamic reconfigure
@@ -80,10 +87,9 @@ namespace hanp_prediction
         velobs_max_rad_ = velobs_max_rad;
         velobs_max_rad_time_ = velobs_max_rad_time;
 
-        ROS_DEBUG_NAMED(NODE_NAME, "parameters set: velocity-scale: scales=[%f, %f, %f], angle=%f"
+        ROS_DEBUG_NAMED(NODE_NAME, "parameters set: velocity-scale: scales=[%f, %f, %f], angle=%f, reduce=%f"
         "velocity-obstacle: min-radius:%f, max-radius:%f, max-radius-time=%f",
-        velscale_scales_[0], velscale_scales_[1], velscale_scales_[2],
-        velscale_angle_, velscale_reduce_,
+        velscale_scales_[0], velscale_scales_[1], velscale_scales_[2], velscale_angle_, velscale_reduce_,
         velobs_min_rad_, velobs_max_rad_, velobs_max_rad_time_);
     }
 
@@ -96,7 +102,7 @@ namespace hanp_prediction
 
     void HumanPosePrediction::trackedHumansCB(const hanp_msgs::TrackedHumans& tracked_humans)
     {
-        humans_ = tracked_humans;
+        tracked_humans_ = tracked_humans;
     }
 
     bool HumanPosePrediction::predictHumans(hanp_prediction::HumanPosePredict::Request& req,
@@ -179,46 +185,52 @@ namespace hanp_prediction
             return false;
         }
 
-        res.header.stamp = humans_.header.stamp;
-        res.header.frame_id = humans_.header.frame_id;
+        res.header.stamp = tracked_humans_.header.stamp;
+        res.header.frame_id = tracked_humans_.header.frame_id;
 
         // get local refrence of humans
-        auto humans = humans_.tracks;
+        auto humans = tracked_humans_.humans;
 
         for(auto human : humans)
         {
             // TODO: filter by res.ids
 
-            // get linear velocity of the human
-            tf::Vector3 linear_vel(human.twist.twist.linear.x, human.twist.twist.linear.y, human.twist.twist.linear.z);
-
-            // calculate variations in velocity of human
-            std::vector<tf::Vector3> vel_variations;
-            for(auto vel_scale : velscale_scales_)
+            for(auto segment : human.segments)
             {
-                vel_variations.push_back(linear_vel.rotate(tf::Vector3(0, 0, 1), velscale_angle_) * vel_scale);
-                vel_variations.push_back(linear_vel.rotate(tf::Vector3(0, 0, 1), -velscale_angle_) * vel_scale);
+                if(segment.name == default_human_part_)
+                {
+                    // get linear velocity of the human
+                    tf::Vector3 linear_vel(segment.twist.twist.linear.x, segment.twist.twist.linear.y, segment.twist.twist.linear.z);
+
+                    // calculate variations in velocity of human
+                    std::vector<tf::Vector3> vel_variations;
+                    for(auto vel_scale : velscale_scales_)
+                    {
+                        vel_variations.push_back(linear_vel.rotate(tf::Vector3(0, 0, 1), velscale_angle_) * vel_scale);
+                        vel_variations.push_back(linear_vel.rotate(tf::Vector3(0, 0, 1), -velscale_angle_) * vel_scale);
+                    }
+
+                    // calculate future human poses based on velocity variations
+                    hanp_prediction::PredictedPoses predicted_poses;
+                    predicted_poses.track_id = human.track_id;
+                    for(auto vel : vel_variations)
+                    {
+                        hanp_prediction::PredictedPose predicted_pose;
+                        predicted_pose.pose2d.x = segment.pose.pose.position.x + vel.x() * req.predict_times[0];
+                        predicted_pose.pose2d.y = segment.pose.pose.position.y + vel.y() * req.predict_times[0];
+                        predicted_pose.pose2d.theta = tf::getYaw(segment.pose.pose.orientation);
+                        predicted_pose.radius = 0.0;
+                        predicted_poses.poses.push_back(predicted_pose);
+
+                        ROS_DEBUG_NAMED(NODE_NAME, "predected human (%lu) segment (%s)"
+                            " pose: x=%f, y=%f, theta=%f with vel x=%f,y=%f",
+                            human.track_id, segment.name.c_str(), predicted_pose.pose2d.x,
+                            predicted_pose.pose2d.y, predicted_pose.pose2d.theta, vel.x(), vel.y());
+                    }
+
+                    res.predicted_humans.push_back(predicted_poses);
+                }
             }
-
-            // calculate future human poses based on velocity variations
-            hanp_prediction::PredictedPoses predicted_poses;
-            predicted_poses.track_id = human.track_id;
-            for(auto vel : vel_variations)
-            {
-                hanp_prediction::PredictedPose predicted_pose;
-                predicted_pose.pose2d.x = human.pose.pose.position.x + vel[0] * req.predict_times[0];
-                predicted_pose.pose2d.y = human.pose.pose.position.y + vel[1] * req.predict_times[0];
-                predicted_pose.pose2d.theta = tf::getYaw(human.pose.pose.orientation);
-                predicted_pose.radius = 0.0;
-                predicted_poses.poses.push_back(predicted_pose);
-
-                ROS_DEBUG_NAMED(NODE_NAME, "predected human (%d)"
-                    " pose: x=%f, y=%f, theta=%f with vel scale %f",
-                    human.track_id, predicted_pose.pose2d.x, predicted_pose.pose2d.y,
-                    predicted_pose.pose2d.theta, vel);
-            }
-
-            res.predicted_humans.push_back(predicted_poses);
         }
 
         return true;
@@ -227,53 +239,56 @@ namespace hanp_prediction
     bool HumanPosePrediction::predictHumansVelObs(hanp_prediction::HumanPosePredict::Request& req,
         hanp_prediction::HumanPosePredict::Response& res)
     {
-        res.header.stamp = humans_.header.stamp;
-        res.header.frame_id = humans_.header.frame_id;
+        res.header.stamp = tracked_humans_.header.stamp;
+        res.header.frame_id = tracked_humans_.header.frame_id;
 
         // get local refrence of humans
-        auto humans = humans_.tracks;
+        auto humans = tracked_humans_.humans;
 
         for(auto human : humans)
         {
             // TODO: filter by res.ids
 
-            ROS_DEBUG_NAMED(NODE_NAME, "%s: predecting human (%d) at"
-                " pose: x=%f, y=%f, theta=%f", NODE_NAME, human.track_id, human.pose.pose.position.x,
-                human.pose.pose.position.y, tf::getYaw(human.pose.pose.orientation));
-
-            // calculate future human poses based on current velocity
-            hanp_prediction::PredictedPoses predicted_poses;
-            predicted_poses.track_id = human.track_id;
-
-            // get linear velocity of the human
-            tf::Vector3 linear_vel(human.twist.twist.linear.x, human.twist.twist.linear.y, human.twist.twist.linear.z);
-
-            for(auto predict_time : req.predict_times)
+            for(auto segment : human.segments)
             {
-                // validate prediction time
-                if(predict_time < 0)
+                if(segment.name == default_human_part_)
                 {
-                    ROS_ERROR_NAMED(NODE_NAME, "%s: prediction time cannot be negative (give %f)",
-                        NODE_NAME, predict_time);
-                    return false;
+                    // calculate future human poses based on current velocity
+                    hanp_prediction::PredictedPoses predicted_poses;
+                    predicted_poses.track_id = human.track_id;
+
+                    // get linear velocity of the human
+                    tf::Vector3 linear_vel(segment.twist.twist.linear.x, segment.twist.twist.linear.y, segment.twist.twist.linear.z);
+
+                    for(auto predict_time : req.predict_times)
+                    {
+                        // validate prediction time
+                        if(predict_time < 0)
+                        {
+                            ROS_ERROR_NAMED(NODE_NAME, "%s: prediction time cannot be negative (give %f)",
+                                NODE_NAME, predict_time);
+                            return false;
+                        }
+
+                        hanp_prediction::PredictedPose predicted_pose;
+                        tf::Vector3 predict_lin_vel(linear_vel * (predict_time / velscale_reduce_));
+                        predicted_pose.pose2d.x = segment.pose.pose.position.x + predict_lin_vel[0];
+                        predicted_pose.pose2d.y = segment.pose.pose.position.y + predict_lin_vel[1];
+                        predicted_pose.pose2d.theta = tf::getYaw(segment.pose.pose.orientation);
+                        double xy_vel = hypot(predict_lin_vel[0], predict_lin_vel[1]);
+                        predicted_pose.radius = velobs_min_rad_ + (velobs_max_rad_ - velobs_min_rad_)
+                            * (predict_time / velobs_max_rad_time_) * xy_vel;
+                        predicted_poses.poses.push_back(predicted_pose);
+
+                        ROS_DEBUG_NAMED(NODE_NAME, "%s: predected human (%lu) segment (%s)"
+                            " pose: x=%f, y=%f, theta=%f, predict-time=%f", NODE_NAME,
+                            human.track_id, segment.name.c_str(), predicted_pose.pose2d.x,
+                            predicted_pose.pose2d.y, predicted_pose.pose2d.theta, predict_time);
+                    }
+
+                    res.predicted_humans.push_back(predicted_poses);
                 }
-
-                hanp_prediction::PredictedPose predicted_pose;
-                tf::Vector3 predict_lin_vel(linear_vel * (predict_time / velscale_reduce_));
-                predicted_pose.pose2d.x = human.pose.pose.position.x + predict_lin_vel[0];
-                predicted_pose.pose2d.y = human.pose.pose.position.y + predict_lin_vel[1];
-                predicted_pose.pose2d.theta = tf::getYaw(human.pose.pose.orientation);
-                double xy_vel = hypot(predict_lin_vel[0], predict_lin_vel[1]);
-                predicted_pose.radius = velobs_min_rad_ + (velobs_max_rad_ - velobs_min_rad_)
-                    * (predict_time / velobs_max_rad_time_) * xy_vel;
-                predicted_poses.poses.push_back(predicted_pose);
-
-                ROS_DEBUG_NAMED(NODE_NAME, "%s: predected human (%d)"
-                    " pose: x=%f, y=%f, theta=%f, predict-time=%f", NODE_NAME, human.track_id,
-                    predicted_pose.pose2d.x, predicted_pose.pose2d.y, predicted_pose.pose2d.theta, predict_time);
             }
-
-            res.predicted_humans.push_back(predicted_poses);
         }
 
         return true;
