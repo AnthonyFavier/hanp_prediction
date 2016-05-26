@@ -33,7 +33,7 @@
 #define HUMANS_SUB_TOPIC "tracked_humans"
 #define PREDICT_SERVICE_NAME "predict_2d_human_poses"
 #define PREDICTED_HUMANS_MARKERS_PUB_TOPIC "predicted_human_poses"
-#define DEFAULT_HUMAN_PART "torso"
+#define DEFAULT_HUMAN_PART hanp_msgs::TrackedSegmentType::TORSO
 
 #include <signal.h>
 
@@ -57,8 +57,7 @@ namespace hanp_prediction
             std::string(PREDICT_SERVICE_NAME));
         private_nh.param("predicted_humans_markers_pub_topic", predicted_humans_markers_pub_topic_,
             std::string(PREDICTED_HUMANS_MARKERS_PUB_TOPIC));
-        private_nh.param("default_human_part", default_human_part_,
-            std::string(DEFAULT_HUMAN_PART));
+        private_nh.param("default_human_part", default_human_part_, (int)(DEFAULT_HUMAN_PART));
 
         // initialize subscribers and publishers
         tracked_humans_sub_ = private_nh.subscribe(tracked_humans_sub_topic_, 1,
@@ -197,7 +196,7 @@ namespace hanp_prediction
 
             for(auto segment : human.segments)
             {
-                if(segment.name == default_human_part_)
+                if(segment.type == default_human_part_)
                 {
                     // get linear velocity of the human
                     tf::Vector3 linear_vel(segment.twist.twist.linear.x, segment.twist.twist.linear.y, segment.twist.twist.linear.z);
@@ -222,9 +221,9 @@ namespace hanp_prediction
                         predicted_pose.radius = 0.0;
                         predicted_poses.poses.push_back(predicted_pose);
 
-                        ROS_DEBUG_NAMED(NODE_NAME, "predected human (%lu) segment (%s)"
+                        ROS_DEBUG_NAMED(NODE_NAME, "predected human (%lu) segment (%d)"
                             " pose: x=%f, y=%f, theta=%f with vel x=%f,y=%f",
-                            human.track_id, segment.name.c_str(), predicted_pose.pose2d.x,
+                            human.track_id, segment.type, predicted_pose.pose2d.x,
                             predicted_pose.pose2d.y, predicted_pose.pose2d.theta, vel.x(), vel.y());
                     }
 
@@ -251,7 +250,7 @@ namespace hanp_prediction
 
             for(auto segment : human.segments)
             {
-                if(segment.name == default_human_part_)
+                if(segment.type == default_human_part_)
                 {
                     // calculate future human poses based on current velocity
                     hanp_prediction::PredictedPoses predicted_poses;
@@ -280,9 +279,9 @@ namespace hanp_prediction
                             * (predict_time / velobs_max_rad_time_) * xy_vel;
                         predicted_poses.poses.push_back(predicted_pose);
 
-                        ROS_DEBUG_NAMED(NODE_NAME, "%s: predected human (%lu) segment (%s)"
+                        ROS_DEBUG_NAMED(NODE_NAME, "%s: predected human (%lu) segment (%d)"
                             " pose: x=%f, y=%f, theta=%f, predict-time=%f", NODE_NAME,
-                            human.track_id, segment.name.c_str(), predicted_pose.pose2d.x,
+                            human.track_id, segment.type, predicted_pose.pose2d.x,
                             predicted_pose.pose2d.y, predicted_pose.pose2d.theta, predict_time);
                     }
 

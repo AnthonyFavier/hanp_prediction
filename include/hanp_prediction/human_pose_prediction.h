@@ -36,6 +36,7 @@
 #include <hanp_prediction/HumanPosePredictionConfig.h>
 
 #include <hanp_msgs/TrackedHumans.h>
+#include <hanp_msgs/TrackedSegmentType.h>
 #include <hanp_prediction/HumanPosePredict.h>
 #include <tf/transform_listener.h>
 
@@ -71,7 +72,8 @@ namespace hanp_prediction
         void trackedHumansCB(const hanp_msgs::TrackedHumans& tracked_humans);
 
         std::string tracked_humans_sub_topic_, predict_service_name_,
-            predicted_humans_markers_pub_topic_, default_human_part_;
+            predicted_humans_markers_pub_topic_;
+        int default_human_part_;
 
         hanp_msgs::TrackedHumans tracked_humans_;
         std::vector<double> velscale_scales_;
