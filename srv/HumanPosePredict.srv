@@ -8,5 +8,4 @@ int64[]                             ids
 bool                                publish_markers
 ---
 # response fields
-Header                              header
 hanp_prediction/PredictedPoses[]    predicted_humans

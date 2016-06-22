@@ -31,9 +31,12 @@
 #define NODE_NAME "human_pose_prediction"
 
 #define HUMANS_SUB_TOPIC "tracked_humans"
-#define PREDICT_SERVICE_NAME "predict_2d_human_poses"
+#define PREDICT_SERVICE_NAME "predict_human_poses"
 #define PREDICTED_HUMANS_MARKERS_PUB_TOPIC "predicted_human_poses"
 #define DEFAULT_HUMAN_PART hanp_msgs::TrackedSegmentType::TORSO
+#define MAX_HUMAN_MARKERS 100
+#define MIN_MARKER_LIFETIME 1.0
+#define MINIMUM_COVARIANCE_MARKERS 0.1
 
 #include <signal.h>
 
@@ -76,26 +79,27 @@ namespace hanp_prediction
     }
 
     void HumanPosePrediction::setParams(std::vector<double> velscale_scales,
-        double velscale_angle, double velscale_reduce,
+        double velscale_angle, double velscale_mul, double velobs_mul,
         double velobs_min_rad, double velobs_max_rad, double velobs_max_rad_time)
     {
         velscale_scales_ = velscale_scales;
         velscale_angle_ = velscale_angle;
-        velscale_reduce_ = velscale_reduce;
+        velscale_mul_ = velscale_mul;
+        velobs_mul_ = velobs_mul;
         velobs_min_rad_ = velobs_min_rad;
         velobs_max_rad_ = velobs_max_rad;
         velobs_max_rad_time_ = velobs_max_rad_time;
 
-        ROS_DEBUG_NAMED(NODE_NAME, "parameters set: velocity-scale: scales=[%f, %f, %f], angle=%f, reduce=%f"
+        ROS_DEBUG_NAMED(NODE_NAME, "parameters set: velocity-scale: scales=[%f, %f, %f], angle=%f, velscale-mul=%f, velobs-mul=%f"
         "velocity-obstacle: min-radius:%f, max-radius:%f, max-radius-time=%f",
-        velscale_scales_[0], velscale_scales_[1], velscale_scales_[2], velscale_angle_, velscale_reduce_,
+        velscale_scales_[0], velscale_scales_[1], velscale_scales_[2], velscale_angle_, velscale_mul_, velobs_mul_,
         velobs_min_rad_, velobs_max_rad_, velobs_max_rad_time_);
     }
 
     void HumanPosePrediction::reconfigureCB(HumanPosePredictionConfig &config, uint32_t level)
     {
         setParams({config.velscale_lower, config.velscale_nominal, config.velscale_higher},
-            config.velscale_angle, config.velscale_reduce,
+            config.velscale_angle, config.velscale_mul, config.velobs_mul,
             config.velobs_min_rad, config.velobs_max_rad, config.velobs_max_rad_time);
     }
 
@@ -126,38 +130,43 @@ namespace hanp_prediction
         {
             if(req.publish_markers)
             {
-                // delete all previous markers
-                predicted_humans_markers_.markers.clear();
-                visualization_msgs::Marker delete_human;
-                delete_human.action = 3; // visualization_msgs::Marker::DELETEALL
-                predicted_humans_markers_.markers.push_back(delete_human);
-                predicted_humans_pub_.publish(predicted_humans_markers_);
-
                 // create new markers
-                int marker_id = 0;
                 predicted_humans_markers_.markers.clear();
 
                 for(auto predicted_human : res.predicted_humans)
                 {
-                    for(auto predicted_human_pose : predicted_human.poses)
+                    if(predicted_human.poses.size() > 0)
                     {
-                        visualization_msgs::Marker predicted_human_marker;
-                        predicted_human_marker.header.frame_id = res.header.frame_id;
-                        predicted_human_marker.header.stamp = res.header.stamp;
-                        predicted_human_marker.id = marker_id++;
-                        predicted_human_marker.type = visualization_msgs::Marker::CYLINDER;
-                        predicted_human_marker.action = visualization_msgs::Marker::ADD;
-                        predicted_human_marker.scale.x = predicted_human_pose.radius;
-                        predicted_human_marker.scale.y = predicted_human_pose.radius;
-                        predicted_human_marker.scale.z = 0.01;
-                        predicted_human_marker.color.a = 1.0;
-                        predicted_human_marker.color.r = 0.0;
-                        predicted_human_marker.color.g = 0.0;
-                        predicted_human_marker.color.b = 1.0;
-                        predicted_human_marker.lifetime = ros::Duration(req.predict_times.back());
-                        predicted_human_marker.pose.position.x = predicted_human_pose.pose2d.x;
-                        predicted_human_marker.pose.position.y = predicted_human_pose.pose2d.y;
-                        predicted_humans_markers_.markers.push_back(predicted_human_marker);
+                        auto first_pose_time = predicted_human.poses[0].header.stamp;
+                        int marker_id = 0;
+
+                        for(auto predicted_human_pose : predicted_human.poses)
+                        {
+                            visualization_msgs::Marker predicted_human_marker;
+                            predicted_human_marker.header.frame_id = predicted_human_pose.header.frame_id;
+                            predicted_human_marker.header.stamp = first_pose_time;
+                            predicted_human_marker.id = (predicted_human.track_id * MAX_HUMAN_MARKERS) + marker_id++;
+                            predicted_human_marker.type = visualization_msgs::Marker::CYLINDER;
+                            predicted_human_marker.action = visualization_msgs::Marker::MODIFY;
+                            // assuming diagonal covariance matrix (with row-major order)
+                            predicted_human_marker.scale.x = std::max(predicted_human_pose.pose.covariance[0], MINIMUM_COVARIANCE_MARKERS);
+                            predicted_human_marker.scale.y = std::max(predicted_human_pose.pose.covariance[7], MINIMUM_COVARIANCE_MARKERS);
+                            predicted_human_marker.scale.z = 0.01;
+                            predicted_human_marker.color.a = 1.0;
+                            predicted_human_marker.color.r = 0.0;
+                            predicted_human_marker.color.g = 0.0;
+                            predicted_human_marker.color.b = 1.0;
+                            predicted_human_marker.lifetime = ros::Duration(MIN_MARKER_LIFETIME) + (predicted_human_pose.header.stamp - first_pose_time);
+                            predicted_human_marker.pose.position.x = predicted_human_pose.pose.pose.position.x;
+                            predicted_human_marker.pose.position.y = predicted_human_pose.pose.pose.position.y;
+                            // time on z axis
+                            predicted_human_marker.pose.position.z = (predicted_human_pose.header.stamp - first_pose_time).toSec();
+                            predicted_humans_markers_.markers.push_back(predicted_human_marker);
+                        }
+                    }
+                    else
+                    {
+                        ROS_WARN_NAMED(NODE_NAME, "no predicted poses fro human %ld", predicted_human.track_id);
                     }
                 }
 
@@ -178,17 +187,27 @@ namespace hanp_prediction
         hanp_prediction::HumanPosePredict::Response& res)
     {
         // validate prediction time
-        if((req.predict_times.size() < 1) || (req.predict_times[0] < 0))
+        if(req.predict_times.size() == 0)
+        {
+            ROS_ERROR_NAMED(NODE_NAME, "prediction times cannot be empty");
+            return false;
+        }
+        if(req.predict_times[0] < 0)
         {
             ROS_ERROR_NAMED(NODE_NAME, "prediction time cannot be negative (give %f)", req.predict_times[0]);
             return false;
         }
 
-        res.header.stamp = tracked_humans_.header.stamp;
-        res.header.frame_id = tracked_humans_.header.frame_id;
-
         // get local refrence of humans
         auto humans = tracked_humans_.humans;
+        auto track_frame = tracked_humans_.header.frame_id;
+        auto track_time = tracked_humans_.header.stamp;
+
+        if(track_time.toSec() < req.predict_times[0])
+        {
+            ROS_DEBUG_NAMED(NODE_NAME, "human data is older than prediction time, predicting nothing");
+            return true;
+        }
 
         for(auto human : humans)
         {
@@ -205,8 +224,8 @@ namespace hanp_prediction
                     std::vector<tf::Vector3> vel_variations;
                     for(auto vel_scale : velscale_scales_)
                     {
-                        vel_variations.push_back(linear_vel.rotate(tf::Vector3(0, 0, 1), velscale_angle_) * vel_scale);
-                        vel_variations.push_back(linear_vel.rotate(tf::Vector3(0, 0, 1), -velscale_angle_) * vel_scale);
+                        vel_variations.push_back(linear_vel.rotate(tf::Vector3(0, 0, 1), velscale_angle_) * vel_scale * velscale_mul_);
+                        vel_variations.push_back(linear_vel.rotate(tf::Vector3(0, 0, 1), -velscale_angle_) * vel_scale * velscale_mul_);
                     }
 
                     // calculate future human poses based on velocity variations
@@ -214,17 +233,19 @@ namespace hanp_prediction
                     predicted_poses.track_id = human.track_id;
                     for(auto vel : vel_variations)
                     {
-                        hanp_prediction::PredictedPose predicted_pose;
-                        predicted_pose.pose2d.x = segment.pose.pose.position.x + vel.x() * req.predict_times[0];
-                        predicted_pose.pose2d.y = segment.pose.pose.position.y + vel.y() * req.predict_times[0];
-                        predicted_pose.pose2d.theta = tf::getYaw(segment.pose.pose.orientation);
-                        predicted_pose.radius = 0.0;
+                        geometry_msgs::PoseWithCovarianceStamped predicted_pose;
+                        predicted_pose.header.frame_id = track_frame;
+                        predicted_pose.header.stamp = track_time + ros::Duration(req.predict_times[0]);
+                        predicted_pose.pose.pose.position.x = segment.pose.pose.position.x + vel.x() * req.predict_times[0];
+                        predicted_pose.pose.pose.position.y = segment.pose.pose.position.y + vel.y() * req.predict_times[0];
+                        predicted_pose.pose.pose.orientation = segment.pose.pose.orientation;
+                        // no covariance for this method
                         predicted_poses.poses.push_back(predicted_pose);
 
                         ROS_DEBUG_NAMED(NODE_NAME, "predected human (%lu) segment (%d)"
                             " pose: x=%f, y=%f, theta=%f with vel x=%f,y=%f",
-                            human.track_id, segment.type, predicted_pose.pose2d.x,
-                            predicted_pose.pose2d.y, predicted_pose.pose2d.theta, vel.x(), vel.y());
+                            human.track_id, segment.type, predicted_pose.pose.pose.position.x, predicted_pose.pose.pose.position.y,
+                            tf::getYaw(predicted_pose.pose.pose.orientation), vel.x(), vel.y());
                     }
 
                     res.predicted_humans.push_back(predicted_poses);
@@ -238,11 +259,28 @@ namespace hanp_prediction
     bool HumanPosePrediction::predictHumansVelObs(hanp_prediction::HumanPosePredict::Request& req,
         hanp_prediction::HumanPosePredict::Response& res)
     {
-        res.header.stamp = tracked_humans_.header.stamp;
-        res.header.frame_id = tracked_humans_.header.frame_id;
+        // validate prediction time
+        if(req.predict_times.size() == 0)
+        {
+            ROS_ERROR_NAMED(NODE_NAME, "prediction times cannot be empty");
+            return false;
+        }
+        if(*std::min_element(req.predict_times.begin(), req.predict_times.end()) < 0.0)
+        {
+            ROS_ERROR_NAMED(NODE_NAME, "prediction time cannot be negative");
+            return false;
+        }
 
         // get local refrence of humans
         auto humans = tracked_humans_.humans;
+        auto track_frame = tracked_humans_.header.frame_id;
+        auto track_time = tracked_humans_.header.stamp;
+
+        if((ros::Time::now() - track_time).toSec() > *std::max_element(req.predict_times.begin(), req.predict_times.end()))
+        {
+            ROS_DEBUG_NAMED(NODE_NAME, "human data is older than maximum given prediction time, predicting nothing");
+            return true;
+        }
 
         for(auto human : humans)
         {
@@ -269,20 +307,24 @@ namespace hanp_prediction
                             return false;
                         }
 
-                        hanp_prediction::PredictedPose predicted_pose;
-                        tf::Vector3 predict_lin_vel(linear_vel * (predict_time / velscale_reduce_));
-                        predicted_pose.pose2d.x = segment.pose.pose.position.x + predict_lin_vel[0];
-                        predicted_pose.pose2d.y = segment.pose.pose.position.y + predict_lin_vel[1];
-                        predicted_pose.pose2d.theta = tf::getYaw(segment.pose.pose.orientation);
+                        geometry_msgs::PoseWithCovarianceStamped predicted_pose;
+                        tf::Vector3 predict_lin_vel(linear_vel * predict_time * velobs_mul_);
+                        predicted_pose.header.frame_id = track_frame;
+                        predicted_pose.header.stamp = track_time + ros::Duration(predict_time);
+                        predicted_pose.pose.pose.position.x = segment.pose.pose.position.x + predict_lin_vel[0];
+                        predicted_pose.pose.pose.position.y = segment.pose.pose.position.y + predict_lin_vel[1];
+                        predicted_pose.pose.pose.orientation = segment.pose.pose.orientation;
                         double xy_vel = hypot(predict_lin_vel[0], predict_lin_vel[1]);
-                        predicted_pose.radius = velobs_min_rad_ + (velobs_max_rad_ - velobs_min_rad_)
+                        // storing only x, y covariance in diagonal matrix
+                        predicted_pose.pose.covariance[0] = velobs_min_rad_ + (velobs_max_rad_ - velobs_min_rad_)
                             * (predict_time / velobs_max_rad_time_) * xy_vel;
+                        predicted_pose.pose.covariance[7] = predicted_pose.pose.covariance[0];
                         predicted_poses.poses.push_back(predicted_pose);
 
                         ROS_DEBUG_NAMED(NODE_NAME, "%s: predected human (%lu) segment (%d)"
                             " pose: x=%f, y=%f, theta=%f, predict-time=%f", NODE_NAME,
-                            human.track_id, segment.type, predicted_pose.pose2d.x,
-                            predicted_pose.pose2d.y, predicted_pose.pose2d.theta, predict_time);
+                            human.track_id, segment.type, predicted_pose.pose.pose.position.x, predicted_pose.pose.pose.position.y,
+                            tf::getYaw(predicted_pose.pose.pose.orientation), predict_time);
                     }
 
                     res.predicted_humans.push_back(predicted_poses);

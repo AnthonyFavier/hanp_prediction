@@ -1,2 +1,2 @@
-uint64                          track_id
-hanp_prediction/PredictedPose[] poses
+uint64                                      track_id
+geometry_msgs/PoseWithCovarianceStamped[]   poses
