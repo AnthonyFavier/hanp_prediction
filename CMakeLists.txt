@@ -134,3 +134,17 @@ target_link_libraries(human_pose_prediction ${catkin_LIBRARIES})
 
 ## add nosetest file folders
 # catkin_add_nosetests(test)
+
+## add helpers for testing
+include_directories(
+  ${catkin_INCLUDE_DIRS}
+)
+add_executable(prediction_service_caller
+  test/prediction_service_caller.cpp
+)
+add_dependencies(prediction_service_caller
+  ${PROJECT_NAME}_generate_messages_cpp
+)
+target_link_libraries(prediction_service_caller
+  ${catkin_LIBRARIES}
+)

@@ -1,0 +1,20 @@
+<launch>
+    <!--  publish fixed frame transformations and launch fake_human_publisher -->
+    <node pkg="tf" type="static_transform_publisher" name="humans_frmae_transform"
+          args="0 0 0 0 0 0 /map /humans_frame 20"/>
+    <node pkg="hanp_msgs" type="fake_humans_publisher" name="fake_humans_publisher" output="screen">
+        <param name="publish_markers" type="bool" value="true"/>
+        <rosparam file="$(find laas_navigation)/morse_pr2_launch/fake_humans.yaml" command="load"/>
+    </node>
+
+    <!-- start human pose prediction -->
+    <node pkg="hanp_prediction" type="human_pose_prediction" name="human_pose_prediction" output="screen">
+        <!-- remap required topics -->
+        <remap from="/human_pose_prediction/tracked_humans" to="/fake_humans_publisher/humans"/>
+         <param name="velscale_mul" value="3.0"/>
+         <param name="velobs_mul" value="0.7"/>
+    </node>
+
+    <!-- continuously call human pose prediction service -->
+    <node pkg="hanp_prediction" type="prediction_service_caller" name="prediction_service_caller" output="screen"/>
+</launch>
