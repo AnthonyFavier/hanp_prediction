@@ -105,6 +105,7 @@ namespace hanp_prediction
 
     void HumanPosePrediction::trackedHumansCB(const hanp_msgs::TrackedHumans& tracked_humans)
     {
+        ROS_INFO_ONCE_NAMED(NODE_NAME, "hanp_prediction: received humans");
         tracked_humans_ = tracked_humans;
     }
 
