@@ -39,6 +39,7 @@
 #include <hanp_msgs/TrackedSegmentType.h>
 #include <hanp_prediction/HumanPosePredict.h>
 #include <tf/transform_listener.h>
+#include <std_srvs/SetBool.h>
 
 #include <visualization_msgs/MarkerArray.h>
 
@@ -62,7 +63,7 @@ namespace hanp_prediction
         ros::Publisher predicted_humans_pub_;
 
         // ros services
-        ros::ServiceServer predict_humans_server_;
+        ros::ServiceServer predict_humans_server_, publish_markers_srv_;
 
         // dynamic reconfigure variables
         dynamic_reconfigure::Server<HumanPosePredictionConfig> *dsrv_;
@@ -72,8 +73,9 @@ namespace hanp_prediction
         void trackedHumansCB(const hanp_msgs::TrackedHumans& tracked_humans);
 
         std::string tracked_humans_sub_topic_, predict_service_name_,
-            predicted_humans_markers_pub_topic_;
+            predicted_humans_markers_pub_topic_, publish_markers_srv_name_;
         int default_human_part_;
+        bool publish_markers_, showing_markers_;
 
         hanp_msgs::TrackedHumans tracked_humans_;
         std::vector<double> velscale_scales_;
@@ -87,6 +89,8 @@ namespace hanp_prediction
             hanp_prediction::HumanPosePredict::Response& res);
         bool predictHumansVelObs(hanp_prediction::HumanPosePredict::Request& req,
             hanp_prediction::HumanPosePredict::Response& res);
+        bool setPublishMarkers(std_srvs::SetBool::Request& req,
+            std_srvs::SetBool::Response& res);
     };
 }
 

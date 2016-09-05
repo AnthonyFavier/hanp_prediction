@@ -5,7 +5,6 @@ uint8 VELOCITY_OBSTACLE=1
 uint8                               type
 float64[]                           predict_times
 int64[]                             ids
-bool                                publish_markers
 ---
 # response fields
 hanp_prediction/PredictedPoses[]    predicted_humans

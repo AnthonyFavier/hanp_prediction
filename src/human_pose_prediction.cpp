@@ -32,6 +32,7 @@
 
 #define HUMANS_SUB_TOPIC "tracked_humans"
 #define PREDICT_SERVICE_NAME "predict_human_poses"
+#define PUBLISH_MARKERS_SRV_NAME "publish_prediction_markers"
 #define PREDICTED_HUMANS_MARKERS_PUB_TOPIC "predicted_human_poses"
 #define DEFAULT_HUMAN_PART hanp_msgs::TrackedSegmentType::TORSO
 #define MAX_HUMAN_MARKERS 100
@@ -60,6 +61,8 @@ namespace hanp_prediction
             std::string(PREDICT_SERVICE_NAME));
         private_nh.param("predicted_humans_markers_pub_topic", predicted_humans_markers_pub_topic_,
             std::string(PREDICTED_HUMANS_MARKERS_PUB_TOPIC));
+        private_nh.param("publish_markers_srv_name", publish_markers_srv_name_,
+            std::string(PUBLISH_MARKERS_SRV_NAME));
         private_nh.param("default_human_part", default_human_part_, (int)(DEFAULT_HUMAN_PART));
 
         // initialize subscribers and publishers
@@ -74,6 +77,8 @@ namespace hanp_prediction
 
         // initialize services
         predict_humans_server_ = private_nh.advertiseService(predict_service_name_, &HumanPosePrediction::predictHumans, this);
+        publish_markers_srv_ = private_nh.advertiseService(publish_markers_srv_name_, &HumanPosePrediction::setPublishMarkers, this);
+        showing_markers_ = false;
 
         ROS_DEBUG_NAMED(NODE_NAME, "node %s initialized", NODE_NAME);
     }
@@ -129,7 +134,7 @@ namespace hanp_prediction
 
         if(!prediction_function.empty() && prediction_function(req, res))
         {
-            if(req.publish_markers)
+            if(publish_markers_)
             {
                 // create new markers
                 predicted_humans_markers_.markers.clear();
@@ -172,8 +177,21 @@ namespace hanp_prediction
                 }
 
                 predicted_humans_pub_.publish(predicted_humans_markers_);
+                showing_markers_ = true;
 
                 ROS_DEBUG_NAMED(NODE_NAME, "published predicted humans");
+            }
+            else
+            {
+                if (showing_markers_)
+                {
+                    predicted_humans_markers_.markers.clear();
+                    visualization_msgs::Marker delete_human_markers;
+                    delete_human_markers.action = 3; // visualization_msgs::Marker::DELETEALL;
+                    predicted_humans_markers_.markers.push_back(delete_human_markers);
+                    predicted_humans_pub_.publish(predicted_humans_markers_);
+                    showing_markers_ = false;
+                }
             }
 
             return true;
@@ -333,6 +351,15 @@ namespace hanp_prediction
             }
         }
 
+        return true;
+    }
+
+    bool HumanPosePrediction::setPublishMarkers(std_srvs::SetBool::Request& req,
+        std_srvs::SetBool::Response& res)
+    {
+        publish_markers_ = req.data;
+        res.success = true;
+        res.message = "Prediction markers publishing " + publish_markers_ ? "enabled" : "disabled";
         return true;
     }
 }

@@ -28,6 +28,7 @@
  */
 
 #define PREDICT_SERVICE_NAME "/human_pose_prediction/predict_human_poses"
+#define PUBLISH_MARKERS_SRV_NAME "/human_pose_prediction/publish_prediction_markers"
 #define PERSISTANT_CONNECTION true
 #define PUBLISH_MARKERS true
 #define LOOP_RATE 10.0
@@ -37,6 +38,7 @@
 
 #include <ros/ros.h>
 #include <hanp_prediction/HumanPosePredict.h>
+#include <std_srvs/SetBool.h>
 
 int main(int argc, char **argv)
 {
@@ -44,13 +46,14 @@ int main(int argc, char **argv)
 
     ros::NodeHandle nh("~");
 
-    std::string predict_service_name;
+    std::string predict_service_name, publish_markers_srv_name;
     bool persistant_connection, publish_markers;
     double loop_rate_time, predict_time;
     int traj_size;
 
     // get parameters from server
     nh.param<std::string>("predict_service_name", predict_service_name, PREDICT_SERVICE_NAME);
+    nh.param<std::string>("publish_markers_service_name", publish_markers_srv_name, PUBLISH_MARKERS_SRV_NAME);
     nh.param<bool>("persistant_connection", persistant_connection, PERSISTANT_CONNECTION);
     nh.param<bool>("publish_markers", publish_markers, PUBLISH_MARKERS);
     nh.param<double>("loop_rate", loop_rate_time, LOOP_RATE);
@@ -61,6 +64,7 @@ int main(int argc, char **argv)
 
     // set up service
     auto predict_humans_client = nh.serviceClient<hanp_prediction::HumanPosePredict>(predict_service_name, persistant_connection);
+    auto publish_markers_client = nh.serviceClient<std_srvs::SetBool>(publish_markers_srv_name, persistant_connection);
 
     hanp_prediction::HumanPosePredict predict_srv;
     for(double i = 1.0; i <= traj_size; ++i)
@@ -68,12 +72,19 @@ int main(int argc, char **argv)
         predict_srv.request.predict_times.push_back(predict_time * (i / traj_size));
     }
     predict_srv.request.type = hanp_prediction::HumanPosePredictRequest::VELOCITY_SCALE;
-    predict_srv.request.publish_markers = publish_markers;
+
+    std_srvs::SetBool publish_markers_srv;
+    publish_markers_srv.request.data = publish_markers;
 
     auto change_counter = STRATEGY_CHANGE_TIME * LOOP_RATE;
     while (ros::ok())
     {
         ROS_DEBUG("calling prediction service");
+        if(!publish_markers_client || !publish_markers_client.call(publish_markers_srv))
+        {
+            ROS_WARN_THROTTLE(4, "failed to call %s service, is prediction server running?", publish_markers_srv_name.c_str());
+            publish_markers_client = nh.serviceClient<std_srvs::SetBool>(publish_markers_srv_name, persistant_connection);
+        }
         if(!predict_humans_client || !predict_humans_client.call(predict_srv))
         {
             ROS_WARN_THROTTLE(4, "failed to call %s service, is prediction server running?", predict_service_name.c_str());

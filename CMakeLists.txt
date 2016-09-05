@@ -11,6 +11,7 @@ find_package(catkin REQUIRED COMPONENTS
   message_generation
   nav_msgs
   roscpp
+  std_srvs
   tf
   visualization_msgs
 )
@@ -59,6 +60,7 @@ catkin_package(
     message_runtime
     nav_msgs
     roscpp
+    std_srvs
     tf
     visualization_msgs
 #   DEPENDS
