@@ -43,55 +43,53 @@
 
 #include <visualization_msgs/MarkerArray.h>
 
-namespace hanp_prediction
-{
-    class HumanPosePrediction
-    {
-    public:
-        HumanPosePrediction();
-        ~HumanPosePrediction();
+namespace hanp_prediction {
+class HumanPosePrediction {
+public:
+  HumanPosePrediction();
+  ~HumanPosePrediction();
 
-        void initialize();
+  void initialize();
 
-        void setParams(std::vector<double> velscale_scales,
-            double velscale_angle, double velscale_mul, double velobs_mul,
-            double velobs_min_rad, double velobs_max_rad, double velobs_max_rad_time);
+  void setParams(std::vector<double> velscale_scales, double velscale_angle,
+                 double velscale_mul, double velobs_mul, double velobs_min_rad,
+                 double velobs_max_rad, double velobs_max_rad_time);
 
-    private:
-        // ros subscribers and publishers
-        ros::Subscriber tracked_humans_sub_;
-        ros::Publisher predicted_humans_pub_;
+private:
+  // ros subscribers and publishers
+  ros::Subscriber tracked_humans_sub_;
+  ros::Publisher predicted_humans_pub_;
 
-        // ros services
-        ros::ServiceServer predict_humans_server_, publish_markers_srv_;
+  // ros services
+  ros::ServiceServer predict_humans_server_, publish_markers_srv_;
 
-        // dynamic reconfigure variables
-        dynamic_reconfigure::Server<HumanPosePredictionConfig> *dsrv_;
-        void reconfigureCB(HumanPosePredictionConfig &config, uint32_t level);
+  // dynamic reconfigure variables
+  dynamic_reconfigure::Server<HumanPosePredictionConfig> *dsrv_;
+  void reconfigureCB(HumanPosePredictionConfig &config, uint32_t level);
 
-        // subscriber callbacks
-        void trackedHumansCB(const hanp_msgs::TrackedHumans& tracked_humans);
+  // subscriber callbacks
+  void trackedHumansCB(const hanp_msgs::TrackedHumans &tracked_humans);
 
-        std::string tracked_humans_sub_topic_, predict_service_name_,
-            predicted_humans_markers_pub_topic_, publish_markers_srv_name_;
-        int default_human_part_;
-        bool publish_markers_, showing_markers_;
+  std::string tracked_humans_sub_topic_, predict_service_name_,
+      predicted_humans_markers_pub_topic_, publish_markers_srv_name_;
+  int default_human_part_;
+  bool publish_markers_, showing_markers_;
 
-        hanp_msgs::TrackedHumans tracked_humans_;
-        std::vector<double> velscale_scales_;
-        double velscale_angle_, velscale_mul_, velobs_mul_,
-            velobs_min_rad_, velobs_max_rad_, velobs_max_rad_time_;
-        visualization_msgs::MarkerArray predicted_humans_markers_;
+  hanp_msgs::TrackedHumans tracked_humans_;
+  std::vector<double> velscale_scales_;
+  double velscale_angle_, velscale_mul_, velobs_mul_, velobs_min_rad_,
+      velobs_max_rad_, velobs_max_rad_time_;
+  visualization_msgs::MarkerArray predicted_humans_markers_;
 
-        bool predictHumans(hanp_prediction::HumanPosePredict::Request& req,
-            hanp_prediction::HumanPosePredict::Response& res);
-        bool predictHumansVelScale(hanp_prediction::HumanPosePredict::Request& req,
-            hanp_prediction::HumanPosePredict::Response& res);
-        bool predictHumansVelObs(hanp_prediction::HumanPosePredict::Request& req,
-            hanp_prediction::HumanPosePredict::Response& res);
-        bool setPublishMarkers(std_srvs::SetBool::Request& req,
-            std_srvs::SetBool::Response& res);
-    };
+  bool predictHumans(hanp_prediction::HumanPosePredict::Request &req,
+                     hanp_prediction::HumanPosePredict::Response &res);
+  bool predictHumansVelScale(hanp_prediction::HumanPosePredict::Request &req,
+                             hanp_prediction::HumanPosePredict::Response &res);
+  bool predictHumansVelObs(hanp_prediction::HumanPosePredict::Request &req,
+                           hanp_prediction::HumanPosePredict::Response &res);
+  bool setPublishMarkers(std_srvs::SetBool::Request &req,
+                         std_srvs::SetBool::Response &res);
+};
 }
 
 #endif // HUMAN_POSE_PREDICTION_H_
