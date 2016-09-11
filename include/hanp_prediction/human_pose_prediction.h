@@ -37,6 +37,7 @@
 
 #include <hanp_msgs/TrackedHumans.h>
 #include <hanp_msgs/TrackedSegmentType.h>
+#include <hanp_msgs/PathArray.h>
 #include <hanp_prediction/HumanPosePredict.h>
 #include <tf/transform_listener.h>
 #include <std_srvs/SetBool.h>
@@ -57,7 +58,7 @@ public:
 
 private:
   // ros subscribers and publishers
-  ros::Subscriber tracked_humans_sub_;
+  ros::Subscriber tracked_humans_sub_, external_paths_sub_;
   ros::Publisher predicted_humans_pub_;
 
   // ros services
@@ -69,13 +70,20 @@ private:
 
   // subscriber callbacks
   void trackedHumansCB(const hanp_msgs::TrackedHumans &tracked_humans);
+  void externalPathsCB(const hanp_msgs::PathArray::ConstPtr &external_paths);
 
-  std::string tracked_humans_sub_topic_, predict_service_name_,
-      predicted_humans_markers_pub_topic_, publish_markers_srv_name_;
+  tf::TransformListener tf_;
+
+  std::string tracked_humans_sub_topic_, external_paths_sub_topic_,
+      predict_service_name_, predicted_humans_markers_pub_topic_,
+      publish_markers_srv_name_;
   int default_human_part_;
-  bool publish_markers_, showing_markers_;
+  bool publish_markers_, showing_markers_, got_new_human_paths_;
 
   hanp_msgs::TrackedHumans tracked_humans_;
+  hanp_msgs::PathArray::ConstPtr external_paths_;
+  std::vector<hanp_prediction::PredictedPoses> lp_poses_;
+  std::map<uint64_t, size_t> last_prune_indices_;
   std::vector<double> velscale_scales_;
   double velscale_angle_, velscale_mul_, velobs_mul_, velobs_min_rad_,
       velobs_max_rad_, velobs_max_rad_time_;
@@ -87,8 +95,20 @@ private:
                              hanp_prediction::HumanPosePredict::Response &res);
   bool predictHumansVelObs(hanp_prediction::HumanPosePredict::Request &req,
                            hanp_prediction::HumanPosePredict::Response &res);
+  bool predictHumansExternal(hanp_prediction::HumanPosePredict::Request &req,
+                             hanp_prediction::HumanPosePredict::Response &res);
   bool setPublishMarkers(std_srvs::SetBool::Request &req,
                          std_srvs::SetBool::Response &res);
+
+  bool transformPoseTwist(geometry_msgs::PoseStamped &pose,
+                          geometry_msgs::TwistStamped &twist,
+                          const hanp_msgs::TrackedHumans &tracked_humans,
+                          const uint64_t &human_id,
+                          const std::string &to_frame);
+  size_t
+  prunePath(size_t begin_index,
+            const geometry_msgs::PoseStamped &pose,
+            const std::vector<geometry_msgs::PoseWithCovarianceStamped> &path);
 };
 }
 

@@ -31,6 +31,7 @@
 #define NODE_NAME "human_pose_prediction"
 
 #define HUMANS_SUB_TOPIC "tracked_humans"
+#define EXTERNAL_PATHS_SUB_TOPIC "external_human_paths"
 #define PREDICT_SERVICE_NAME "predict_human_poses"
 #define PUBLISH_MARKERS_SRV_NAME "publish_prediction_markers"
 #define PREDICTED_HUMANS_MARKERS_PUB_TOPIC "predicted_human_poses"
@@ -55,6 +56,8 @@ void HumanPosePrediction::initialize() {
   // get parameters
   private_nh.param("tracked_humans_sub_topic", tracked_humans_sub_topic_,
                    std::string(HUMANS_SUB_TOPIC));
+  private_nh.param("external_paths_sub_topic", external_paths_sub_topic_,
+                   std::string(EXTERNAL_PATHS_SUB_TOPIC));
   private_nh.param("predict_service_name", predict_service_name_,
                    std::string(PREDICT_SERVICE_NAME));
   private_nh.param("predicted_humans_markers_pub_topic",
@@ -69,6 +72,9 @@ void HumanPosePrediction::initialize() {
   tracked_humans_sub_ =
       private_nh.subscribe(tracked_humans_sub_topic_, 1,
                            &HumanPosePrediction::trackedHumansCB, this);
+  external_paths_sub_ =
+      private_nh.subscribe(external_paths_sub_topic_, 1,
+                           &HumanPosePrediction::externalPathsCB, this);
   predicted_humans_pub_ = private_nh.advertise<visualization_msgs::MarkerArray>(
       predicted_humans_markers_pub_topic_, 1);
 
@@ -85,6 +91,7 @@ void HumanPosePrediction::initialize() {
   publish_markers_srv_ = private_nh.advertiseService(
       publish_markers_srv_name_, &HumanPosePrediction::setPublishMarkers, this);
   showing_markers_ = false;
+  got_new_human_paths_ = false;
 
   ROS_DEBUG_NAMED(NODE_NAME, "node %s initialized", NODE_NAME);
 }
@@ -126,6 +133,13 @@ void HumanPosePrediction::trackedHumansCB(
   tracked_humans_ = tracked_humans;
 }
 
+void HumanPosePrediction::externalPathsCB(
+    const hanp_msgs::PathArray::ConstPtr &external_paths) {
+  ROS_INFO_ONCE_NAMED(NODE_NAME, "hanp_prediction: received human paths");
+  external_paths_ = external_paths;
+  got_new_human_paths_ = true;
+}
+
 bool HumanPosePrediction::predictHumans(
     hanp_prediction::HumanPosePredict::Request &req,
     hanp_prediction::HumanPosePredict::Response &res) {
@@ -141,6 +155,10 @@ bool HumanPosePrediction::predictHumans(
   case hanp_prediction::HumanPosePredictRequest::VELOCITY_OBSTACLE:
     prediction_function =
         boost::bind(&HumanPosePrediction::predictHumansVelObs, this, _1, _2);
+    break;
+  case hanp_prediction::HumanPosePredictRequest::EXTERNAL:
+    prediction_function =
+        boost::bind(&HumanPosePrediction::predictHumansExternal, this, _1, _2);
     break;
   default:
     ROS_ERROR_NAMED(NODE_NAME, "%s: unkonwn prediction type %d", NODE_NAME,
@@ -290,6 +308,12 @@ bool HumanPosePrediction::predictHumansVelScale(
               vel.y());
         }
 
+        geometry_msgs::TwistStamped current_twist;
+        current_twist.header.frame_id = track_frame;
+        current_twist.header.stamp = track_time;
+        current_twist.twist = segment.twist.twist;
+        predicted_poses.twist = current_twist;
+
         res.predicted_humans.push_back(predicted_poses);
       }
     }
@@ -375,8 +399,98 @@ bool HumanPosePrediction::predictHumansVelObs(
               tf::getYaw(predicted_pose.pose.pose.orientation), predict_time);
         }
 
+        geometry_msgs::TwistStamped current_twist;
+        current_twist.header.frame_id = track_frame;
+        current_twist.header.stamp = track_time;
+        current_twist.twist = segment.twist.twist;
+        predicted_poses.twist = current_twist;
+
         res.predicted_humans.push_back(predicted_poses);
       }
+    }
+  }
+
+  return true;
+}
+
+bool HumanPosePrediction::predictHumansExternal(
+    hanp_prediction::HumanPosePredict::Request &req,
+    hanp_prediction::HumanPosePredict::Response &res) {
+  auto external_paths = external_paths_;
+  auto tracked_humans = tracked_humans_;
+
+  if (got_new_human_paths_) {
+    if (external_paths->ids.size() != external_paths->paths.size()) {
+      ROS_ERROR_NAMED(NODE_NAME, "Size of ids and paths must be the same");
+      return true;
+    }
+
+    for (size_t i = 0; i < external_paths->ids.size(); i++) {
+      auto &human_id = external_paths->ids[i];
+      auto &path = external_paths->paths[i];
+
+      hanp_prediction::PredictedPoses predicted_poses;
+      predicted_poses.track_id = external_paths->ids[i];
+
+      for (auto &external_pose : external_paths->paths[i].poses) {
+        geometry_msgs::PoseWithCovarianceStamped predicted_pose;
+        predicted_pose.header.stamp = external_pose.header.stamp;
+        predicted_pose.header.frame_id = external_pose.header.frame_id;
+        predicted_pose.pose.pose = external_pose.pose;
+        predicted_poses.poses.push_back(predicted_pose);
+      }
+
+      for (auto it = lp_poses_.begin(); it != lp_poses_.end(); ++it) {
+        if (it->track_id == human_id) {
+          lp_poses_.erase(it);
+          break;
+        }
+      }
+      lp_poses_.push_back(predicted_poses);
+      last_prune_indices_.erase(human_id);
+    }
+  }
+  got_new_human_paths_ = false;
+
+  for (auto &plan : lp_poses_) {
+    auto &human_id = plan.track_id;
+    auto &path = plan.poses;
+
+    if (path.empty()) {
+      continue;
+    }
+
+    // get start pose of the human in plan frame
+    geometry_msgs::PoseStamped start_pose;
+    geometry_msgs::TwistStamped start_twist;
+    if (transformPoseTwist(start_pose, start_twist, tracked_humans, human_id,
+                           path[0].header.frame_id)) {
+
+      auto lp_index_it = last_prune_indices_.find(human_id);
+      auto begin_index =
+          (lp_index_it != last_prune_indices_.end()) ? lp_index_it->second : 0;
+      auto prune_index = prunePath(begin_index, start_pose, path);
+      last_prune_indices_[human_id] = prune_index;
+      if (prune_index < 0 || prune_index > path.size()) {
+        ROS_ERROR_NAMED(NODE_NAME, "Logical error, cannot prune path");
+        continue;
+      }
+      // ROS_INFO("begin_index = %ld, prune_index = %ld, start_pose: x=%.2f "
+      //          "y=%.2f, theta=%.2f",
+      //          begin_index, prune_index, start_pose.pose.position.x,
+      //          start_pose.pose.position.y,
+      //          tf::getYaw(start_pose.pose.orientation));
+
+      std::vector<geometry_msgs::PoseWithCovarianceStamped> pruned_path(
+          path.begin() + prune_index, path.end());
+
+      hanp_prediction::PredictedPoses predicted_poses;
+      predicted_poses.track_id = human_id;
+      predicted_poses.poses = pruned_path;
+      predicted_poses.twist = start_twist;
+      res.predicted_humans.push_back(predicted_poses);
+      // ROS_INFO("giving path of %ld points from %ld points\n\n",
+      //          pruned_path.size(), path.size());
     }
   }
 
@@ -391,6 +505,75 @@ bool HumanPosePrediction::setPublishMarkers(std_srvs::SetBool::Request &req,
                     ? "enabled"
                     : "disabled";
   return true;
+}
+
+bool HumanPosePrediction::transformPoseTwist(
+    geometry_msgs::PoseStamped &pose, geometry_msgs::TwistStamped &twist,
+    const hanp_msgs::TrackedHumans &tracked_humans, const uint64_t &human_id,
+    const std::string &to_frame) {
+  for (auto &human : tracked_humans.humans) {
+    if (human.track_id == human_id) {
+      for (auto &segment : human.segments) {
+        if (segment.type == default_human_part_) {
+          geometry_msgs::PoseStamped pose_ut;
+          pose_ut.header.stamp = tracked_humans.header.stamp;
+          pose_ut.header.frame_id = tracked_humans.header.frame_id;
+          pose_ut.pose = segment.pose.pose;
+          twist.header.stamp = tracked_humans.header.stamp;
+          twist.header.frame_id = tracked_humans.header.frame_id;
+          twist.twist = segment.twist.twist;
+          try {
+            tf::Stamped<tf::Pose> pose_tf;
+            tf::poseStampedMsgToTF(pose_ut, pose_tf);
+            tf::StampedTransform start_pose_to_plan_transform;
+            tf_.waitForTransform(to_frame, pose_ut.header.frame_id,
+                                 ros::Time(0), ros::Duration(0.5));
+            tf_.lookupTransform(to_frame, pose_ut.header.frame_id, ros::Time(0),
+                                start_pose_to_plan_transform);
+            pose_tf.setData(start_pose_to_plan_transform * pose_tf);
+            tf::poseStampedTFToMsg(pose_tf, pose);
+
+            geometry_msgs::Twist start_twist_to_plan_transform;
+            tf_.lookupTwist(to_frame, twist.header.frame_id, ros::Time(0),
+                            ros::Duration(0.1), start_twist_to_plan_transform);
+            twist.twist.linear.x -= start_twist_to_plan_transform.linear.x;
+            twist.twist.linear.y -= start_twist_to_plan_transform.linear.y;
+            twist.twist.angular.z -= start_twist_to_plan_transform.angular.z;
+            return true;
+          } catch (tf::LookupException &ex) {
+            ROS_ERROR_NAMED(NODE_NAME, "No Transform available Error: %s\n",
+                            ex.what());
+          } catch (tf::ConnectivityException &ex) {
+            ROS_ERROR_NAMED(NODE_NAME, "Connectivity Error: %s\n", ex.what());
+          } catch (tf::ExtrapolationException &ex) {
+            ROS_ERROR_NAMED(NODE_NAME, "Extrapolation Error: %s\n", ex.what());
+          }
+          break;
+        }
+      }
+      break;
+    }
+  }
+  return false;
+}
+
+size_t HumanPosePrediction::prunePath(
+    size_t begin_index, const geometry_msgs::PoseStamped &pose,
+    const std::vector<geometry_msgs::PoseWithCovarianceStamped> &path) {
+  size_t prune_index = begin_index;
+  double x_diff, y_diff, sq_diff,
+      smallest_sq_diff = std::numeric_limits<double>::max();
+  while (begin_index < path.size()) {
+    x_diff = path[begin_index].pose.pose.position.x - pose.pose.position.x;
+    y_diff = path[begin_index].pose.pose.position.y - pose.pose.position.y;
+    sq_diff = x_diff * x_diff + y_diff * y_diff;
+    if (sq_diff < smallest_sq_diff) {
+      prune_index = begin_index;
+      smallest_sq_diff = sq_diff;
+    }
+    ++begin_index;
+  }
+  return prune_index;
 }
 }
 
