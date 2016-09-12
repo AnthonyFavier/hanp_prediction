@@ -84,7 +84,7 @@ private:
 
   hanp_msgs::TrackedHumans tracked_humans_;
   hanp_msgs::HumanPathArray::ConstPtr external_paths_;
-  std::vector<hanp_prediction::PredictedPath> last_predicted_paths_;
+  std::vector<hanp_prediction::PredictedPoses> last_predicted_poses_;
   std::map<uint64_t, size_t> last_prune_indices_;
   std::vector<double> velscale_scales_;
   double velscale_angle_, velscale_mul_, velobs_mul_, velobs_min_rad_,
@@ -102,14 +102,13 @@ private:
   bool setPublishMarkers(std_srvs::SetBool::Request &req,
                          std_srvs::SetBool::Response &res);
 
-  bool transformPoseTwist(geometry_msgs::PoseStamped &pose,
-                          geometry_msgs::TwistStamped &twist,
-                          const hanp_msgs::TrackedHumans &tracked_humans,
-                          const uint64_t &human_id,
-                          const std::string &to_frame);
+  bool transformPoseTwist(const hanp_msgs::TrackedHumans &tracked_humans,
+                          const uint64_t &human_id, const std::string &to_frame,
+                          geometry_msgs::PoseStamped &pose,
+                          geometry_msgs::TwistStamped &twist);
   size_t
   prunePath(size_t begin_index, const geometry_msgs::Pose &pose,
-            const std::vector<geometry_msgs::PoseWithCovariance> &path);
+            const std::vector<geometry_msgs::PoseWithCovarianceStamped> &path);
 };
 }
 

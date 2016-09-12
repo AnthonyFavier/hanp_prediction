@@ -1,3 +1,3 @@
-uint64                                      track_id
+uint64                                      id
 geometry_msgs/PoseWithCovarianceStamped[]   poses
-geometry_msgs/TwistStamped                  twist
+geometry_msgs/TwistStamped                  start_velocity

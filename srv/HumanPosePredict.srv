@@ -8,5 +8,4 @@ float64[]                           predict_times
 int64[]                             ids
 ---
 # response fields
-hanp_prediction/PredictedPoses[]    predicted_humans
-hanp_prediction/PredictedPath[]     predicted_human_paths
+hanp_prediction/PredictedPoses[]    predicted_humans_poses

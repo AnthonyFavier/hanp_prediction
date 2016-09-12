@@ -171,7 +171,7 @@ bool HumanPosePrediction::predictHumans(
       // create new markers
       predicted_humans_markers_.markers.clear();
 
-      for (auto predicted_human : res.predicted_humans) {
+      for (auto predicted_human : res.predicted_humans_poses) {
         if (predicted_human.poses.size() > 0) {
           auto first_pose_time = predicted_human.poses[0].header.stamp;
           int marker_id = 0;
@@ -182,7 +182,7 @@ bool HumanPosePrediction::predictHumans(
                 predicted_human_pose.header.frame_id;
             predicted_human_marker.header.stamp = first_pose_time;
             predicted_human_marker.id =
-                (predicted_human.track_id * MAX_HUMAN_MARKERS) + marker_id++;
+                (predicted_human.id * MAX_HUMAN_MARKERS) + marker_id++;
             predicted_human_marker.type = visualization_msgs::Marker::CYLINDER;
             predicted_human_marker.action = visualization_msgs::Marker::MODIFY;
             // assuming diagonal covariance matrix (with row-major order)
@@ -211,7 +211,7 @@ bool HumanPosePrediction::predictHumans(
           }
         } else {
           ROS_WARN_NAMED(NODE_NAME, "no predicted poses fro human %ld",
-                         predicted_human.track_id);
+                         predicted_human.id);
         }
       }
 
@@ -286,7 +286,7 @@ bool HumanPosePrediction::predictHumansVelScale(
 
         // calculate future human poses based on velocity variations
         hanp_prediction::PredictedPoses predicted_poses;
-        predicted_poses.track_id = human.track_id;
+        predicted_poses.id = human.track_id;
         for (auto vel : vel_variations) {
           geometry_msgs::PoseWithCovarianceStamped predicted_pose;
           predicted_pose.header.frame_id = track_frame;
@@ -313,9 +313,9 @@ bool HumanPosePrediction::predictHumansVelScale(
         current_twist.header.frame_id = track_frame;
         current_twist.header.stamp = track_time;
         current_twist.twist = segment.twist.twist;
-        predicted_poses.twist = current_twist;
+        predicted_poses.start_velocity = current_twist;
 
-        res.predicted_humans.push_back(predicted_poses);
+        res.predicted_humans_poses.push_back(predicted_poses);
       }
     }
   }
@@ -356,7 +356,7 @@ bool HumanPosePrediction::predictHumansVelObs(
       if (segment.type == default_human_part_) {
         // calculate future human poses based on current velocity
         hanp_prediction::PredictedPoses predicted_poses;
-        predicted_poses.track_id = human.track_id;
+        predicted_poses.id = human.track_id;
 
         // get linear velocity of the human
         tf::Vector3 linear_vel(segment.twist.twist.linear.x,
@@ -404,9 +404,9 @@ bool HumanPosePrediction::predictHumansVelObs(
         current_twist.header.frame_id = track_frame;
         current_twist.header.stamp = track_time;
         current_twist.twist = segment.twist.twist;
-        predicted_poses.twist = current_twist;
+        predicted_poses.start_velocity = current_twist;
 
-        res.predicted_humans.push_back(predicted_poses);
+        res.predicted_humans_poses.push_back(predicted_poses);
       }
     }
   }
@@ -422,65 +422,67 @@ bool HumanPosePrediction::predictHumansExternal(
 
   if (got_new_human_paths_) {
     for (auto human_path : external_paths->paths) {
-      hanp_prediction::PredictedPath predicted_path;
-      predicted_path.header.stamp = ros::Time::now();
-      predicted_path.header.frame_id = human_path.header.frame_id;
-      predicted_path.id = human_path.id;
-
       auto &poses = human_path.path.poses;
-      predicted_path.poses.resize(poses.size());
-      for (size_t i = 0; i < poses.size(); ++i) {
-        geometry_msgs::PoseWithCovariance predicted_pose;
-        predicted_pose.pose = poses[i].pose;
-        predicted_path.poses[i] = predicted_pose;
-      }
+      if (!poses.empty()) {
+        hanp_prediction::PredictedPoses predicted_poses;
+        predicted_poses.id = human_path.id;
 
-      for (auto it = last_predicted_paths_.begin();
-           it != last_predicted_paths_.end(); ++it) {
-        if (it->id == predicted_path.id) {
-          last_predicted_paths_.erase(it);
-          break;
+        predicted_poses.poses.resize(poses.size());
+        for (size_t i = 0; i < poses.size(); ++i) {
+          auto &pose = poses[i];
+          geometry_msgs::PoseWithCovarianceStamped predicted_pose;
+          predicted_pose.header.stamp = pose.header.stamp;
+          predicted_pose.header.frame_id = pose.header.frame_id;
+          predicted_pose.pose.pose = pose.pose;
+          predicted_poses.poses[i] = predicted_pose;
         }
-      }
-      last_prune_indices_.erase(predicted_path.id);
 
-      if (!predicted_path.poses.empty()) {
-        last_predicted_paths_.push_back(predicted_path);
+        for (auto it = last_predicted_poses_.begin();
+             it != last_predicted_poses_.end(); ++it) {
+          if (it->id == predicted_poses.id) {
+            last_predicted_poses_.erase(it);
+            break;
+          }
+        }
+        last_prune_indices_.erase(predicted_poses.id);
+        last_predicted_poses_.push_back(predicted_poses);
       }
     }
-    ROS_INFO("hp: processed new external path");
+    ROS_INFO("hp: processed new external paths");
   }
   got_new_human_paths_ = false;
 
-  for (auto &path : last_predicted_paths_) {
-    geometry_msgs::PoseStamped start_pose;
-    geometry_msgs::TwistStamped start_twist;
-    if (transformPoseTwist(start_pose, start_twist, tracked_humans, path.id,
-                           path.header.frame_id)) {
+  for (auto &poses : last_predicted_poses_) {
+    if (!poses.poses.empty()) {
+      geometry_msgs::PoseStamped start_pose;
+      geometry_msgs::TwistStamped start_twist;
+      if (transformPoseTwist(tracked_humans, poses.id,
+                             poses.poses.front().header.frame_id, start_pose,
+                             start_twist)) {
+        auto last_prune_index_it = last_prune_indices_.find(poses.id);
+        auto begin_index = (last_prune_index_it != last_prune_indices_.end())
+                               ? last_prune_index_it->second
+                               : 0;
+        auto prune_index = prunePath(begin_index, start_pose.pose, poses.poses);
+        last_prune_indices_[poses.id] = prune_index;
+        if (prune_index < 0 || prune_index > poses.poses.size()) {
+          ROS_ERROR_NAMED(NODE_NAME, "Logical error, cannot prune path");
+          continue;
+        }
 
-      auto last_prune_index_it = last_prune_indices_.find(path.id);
-      auto begin_index = (last_prune_index_it != last_prune_indices_.end())
-                             ? last_prune_index_it->second
-                             : 0;
-      auto prune_index = prunePath(begin_index, start_pose.pose, path.poses);
-      last_prune_indices_[path.id] = prune_index;
-      if (prune_index < 0 || prune_index > path.poses.size()) {
-        ROS_ERROR_NAMED(NODE_NAME, "Logical error, cannot prune path");
-        continue;
+        std::vector<geometry_msgs::PoseWithCovarianceStamped> pruned_path(
+            poses.poses.begin() + prune_index, poses.poses.end());
+
+        if (!pruned_path.empty()) {
+          hanp_prediction::PredictedPoses predicted_poses;
+          predicted_poses.id = poses.id;
+          predicted_poses.poses = pruned_path;
+          predicted_poses.start_velocity = start_twist;
+          res.predicted_humans_poses.push_back(predicted_poses);
+          ROS_INFO("hp: giving path of %ld points from %ld points\n",
+                   predicted_poses.poses.size(), poses.poses.size());
+        }
       }
-
-      std::vector<geometry_msgs::PoseWithCovariance> pruned_path(
-          path.poses.begin() + prune_index, path.poses.end());
-
-      hanp_prediction::PredictedPath predicted_path;
-      predicted_path.header.stamp = ros::Time::now();
-      predicted_path.header.frame_id = path.header.frame_id;
-      predicted_path.id = path.id;
-      predicted_path.poses = pruned_path;
-      predicted_path.start_velocity = start_twist.twist;
-      res.predicted_human_paths.push_back(predicted_path);
-      ROS_INFO("hp: giving path of %ld points from %ld points\n",
-               predicted_path.poses.size(), path.poses.size());
     }
   }
 
@@ -498,9 +500,9 @@ bool HumanPosePrediction::setPublishMarkers(std_srvs::SetBool::Request &req,
 }
 
 bool HumanPosePrediction::transformPoseTwist(
-    geometry_msgs::PoseStamped &pose, geometry_msgs::TwistStamped &twist,
     const hanp_msgs::TrackedHumans &tracked_humans, const uint64_t &human_id,
-    const std::string &to_frame) {
+    const std::string &to_frame, geometry_msgs::PoseStamped &pose,
+    geometry_msgs::TwistStamped &twist) {
   for (auto &human : tracked_humans.humans) {
     if (human.track_id == human_id) {
       for (auto &segment : human.segments) {
@@ -549,13 +551,13 @@ bool HumanPosePrediction::transformPoseTwist(
 
 size_t HumanPosePrediction::prunePath(
     size_t begin_index, const geometry_msgs::Pose &pose,
-    const std::vector<geometry_msgs::PoseWithCovariance> &path) {
+    const std::vector<geometry_msgs::PoseWithCovarianceStamped> &path) {
   size_t prune_index = begin_index;
   double x_diff, y_diff, sq_diff,
       smallest_sq_diff = std::numeric_limits<double>::max();
   while (begin_index < path.size()) {
-    x_diff = path[begin_index].pose.position.x - pose.position.x;
-    y_diff = path[begin_index].pose.position.y - pose.position.y;
+    x_diff = path[begin_index].pose.pose.position.x - pose.position.x;
+    y_diff = path[begin_index].pose.pose.position.y - pose.position.y;
     sq_diff = x_diff * x_diff + y_diff * y_diff;
     if (sq_diff < smallest_sq_diff) {
       prune_index = begin_index;
