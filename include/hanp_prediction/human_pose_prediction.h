@@ -38,6 +38,7 @@
 #include <hanp_msgs/TrackedHumans.h>
 #include <hanp_msgs/TrackedSegmentType.h>
 #include <hanp_msgs/PathArray.h>
+#include <hanp_msgs/HumanPathArray.h>
 #include <hanp_prediction/HumanPosePredict.h>
 #include <tf/transform_listener.h>
 #include <std_srvs/SetBool.h>
@@ -70,7 +71,8 @@ private:
 
   // subscriber callbacks
   void trackedHumansCB(const hanp_msgs::TrackedHumans &tracked_humans);
-  void externalPathsCB(const hanp_msgs::PathArray::ConstPtr &external_paths);
+  void
+  externalPathsCB(const hanp_msgs::HumanPathArray::ConstPtr &external_paths);
 
   tf::TransformListener tf_;
 
@@ -81,8 +83,8 @@ private:
   bool publish_markers_, showing_markers_, got_new_human_paths_;
 
   hanp_msgs::TrackedHumans tracked_humans_;
-  hanp_msgs::PathArray::ConstPtr external_paths_;
-  std::vector<hanp_prediction::PredictedPoses> lp_poses_;
+  hanp_msgs::HumanPathArray::ConstPtr external_paths_;
+  std::vector<hanp_prediction::PredictedPath> last_predicted_paths_;
   std::map<uint64_t, size_t> last_prune_indices_;
   std::vector<double> velscale_scales_;
   double velscale_angle_, velscale_mul_, velobs_mul_, velobs_min_rad_,
@@ -106,9 +108,8 @@ private:
                           const uint64_t &human_id,
                           const std::string &to_frame);
   size_t
-  prunePath(size_t begin_index,
-            const geometry_msgs::PoseStamped &pose,
-            const std::vector<geometry_msgs::PoseWithCovarianceStamped> &path);
+  prunePath(size_t begin_index, const geometry_msgs::Pose &pose,
+            const std::vector<geometry_msgs::PoseWithCovariance> &path);
 };
 }
 

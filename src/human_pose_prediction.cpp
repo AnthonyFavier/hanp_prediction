@@ -134,10 +134,11 @@ void HumanPosePrediction::trackedHumansCB(
 }
 
 void HumanPosePrediction::externalPathsCB(
-    const hanp_msgs::PathArray::ConstPtr &external_paths) {
+    const hanp_msgs::HumanPathArray::ConstPtr &external_paths) {
   ROS_INFO_ONCE_NAMED(NODE_NAME, "hanp_prediction: received human paths");
   external_paths_ = external_paths;
   got_new_human_paths_ = true;
+  ROS_INFO("hp: got new external paths");
 }
 
 bool HumanPosePrediction::predictHumans(
@@ -420,77 +421,66 @@ bool HumanPosePrediction::predictHumansExternal(
   auto tracked_humans = tracked_humans_;
 
   if (got_new_human_paths_) {
-    if (external_paths->ids.size() != external_paths->paths.size()) {
-      ROS_ERROR_NAMED(NODE_NAME, "Size of ids and paths must be the same");
-      return true;
-    }
+    for (auto human_path : external_paths->paths) {
+      hanp_prediction::PredictedPath predicted_path;
+      predicted_path.header.stamp = ros::Time::now();
+      predicted_path.header.frame_id = human_path.header.frame_id;
+      predicted_path.id = human_path.id;
 
-    for (size_t i = 0; i < external_paths->ids.size(); i++) {
-      auto &human_id = external_paths->ids[i];
-      auto &path = external_paths->paths[i];
-
-      hanp_prediction::PredictedPoses predicted_poses;
-      predicted_poses.track_id = external_paths->ids[i];
-
-      for (auto &external_pose : external_paths->paths[i].poses) {
-        geometry_msgs::PoseWithCovarianceStamped predicted_pose;
-        predicted_pose.header.stamp = external_pose.header.stamp;
-        predicted_pose.header.frame_id = external_pose.header.frame_id;
-        predicted_pose.pose.pose = external_pose.pose;
-        predicted_poses.poses.push_back(predicted_pose);
+      auto &poses = human_path.path.poses;
+      predicted_path.poses.resize(poses.size());
+      for (size_t i = 0; i < poses.size(); ++i) {
+        geometry_msgs::PoseWithCovariance predicted_pose;
+        predicted_pose.pose = poses[i].pose;
+        predicted_path.poses[i] = predicted_pose;
       }
 
-      for (auto it = lp_poses_.begin(); it != lp_poses_.end(); ++it) {
-        if (it->track_id == human_id) {
-          lp_poses_.erase(it);
+      for (auto it = last_predicted_paths_.begin();
+           it != last_predicted_paths_.end(); ++it) {
+        if (it->id == predicted_path.id) {
+          last_predicted_paths_.erase(it);
           break;
         }
       }
-      lp_poses_.push_back(predicted_poses);
-      last_prune_indices_.erase(human_id);
+      last_prune_indices_.erase(predicted_path.id);
+
+      if (!predicted_path.poses.empty()) {
+        last_predicted_paths_.push_back(predicted_path);
+      }
     }
+    ROS_INFO("hp: processed new external path");
   }
   got_new_human_paths_ = false;
 
-  for (auto &plan : lp_poses_) {
-    auto &human_id = plan.track_id;
-    auto &path = plan.poses;
-
-    if (path.empty()) {
-      continue;
-    }
-
-    // get start pose of the human in plan frame
+  for (auto &path : last_predicted_paths_) {
     geometry_msgs::PoseStamped start_pose;
     geometry_msgs::TwistStamped start_twist;
-    if (transformPoseTwist(start_pose, start_twist, tracked_humans, human_id,
-                           path[0].header.frame_id)) {
+    if (transformPoseTwist(start_pose, start_twist, tracked_humans, path.id,
+                           path.header.frame_id)) {
 
-      auto lp_index_it = last_prune_indices_.find(human_id);
-      auto begin_index =
-          (lp_index_it != last_prune_indices_.end()) ? lp_index_it->second : 0;
-      auto prune_index = prunePath(begin_index, start_pose, path);
-      last_prune_indices_[human_id] = prune_index;
-      if (prune_index < 0 || prune_index > path.size()) {
+      auto last_prune_index_it = last_prune_indices_.find(path.id);
+      auto begin_index = (last_prune_index_it != last_prune_indices_.end())
+                             ? last_prune_index_it->second
+                             : 0;
+      auto prune_index = prunePath(begin_index, start_pose.pose, path.poses);
+      last_prune_indices_[path.id] = prune_index;
+      if (prune_index < 0 || prune_index > path.poses.size()) {
         ROS_ERROR_NAMED(NODE_NAME, "Logical error, cannot prune path");
         continue;
       }
-      // ROS_INFO("begin_index = %ld, prune_index = %ld, start_pose: x=%.2f "
-      //          "y=%.2f, theta=%.2f",
-      //          begin_index, prune_index, start_pose.pose.position.x,
-      //          start_pose.pose.position.y,
-      //          tf::getYaw(start_pose.pose.orientation));
 
-      std::vector<geometry_msgs::PoseWithCovarianceStamped> pruned_path(
-          path.begin() + prune_index, path.end());
+      std::vector<geometry_msgs::PoseWithCovariance> pruned_path(
+          path.poses.begin() + prune_index, path.poses.end());
 
-      hanp_prediction::PredictedPoses predicted_poses;
-      predicted_poses.track_id = human_id;
-      predicted_poses.poses = pruned_path;
-      predicted_poses.twist = start_twist;
-      res.predicted_humans.push_back(predicted_poses);
-      // ROS_INFO("giving path of %ld points from %ld points\n\n",
-      //          pruned_path.size(), path.size());
+      hanp_prediction::PredictedPath predicted_path;
+      predicted_path.header.stamp = ros::Time::now();
+      predicted_path.header.frame_id = path.header.frame_id;
+      predicted_path.id = path.id;
+      predicted_path.poses = pruned_path;
+      predicted_path.start_velocity = start_twist.twist;
+      res.predicted_human_paths.push_back(predicted_path);
+      ROS_INFO("hp: giving path of %ld points from %ld points\n",
+               predicted_path.poses.size(), path.poses.size());
     }
   }
 
@@ -558,14 +548,14 @@ bool HumanPosePrediction::transformPoseTwist(
 }
 
 size_t HumanPosePrediction::prunePath(
-    size_t begin_index, const geometry_msgs::PoseStamped &pose,
-    const std::vector<geometry_msgs::PoseWithCovarianceStamped> &path) {
+    size_t begin_index, const geometry_msgs::Pose &pose,
+    const std::vector<geometry_msgs::PoseWithCovariance> &path) {
   size_t prune_index = begin_index;
   double x_diff, y_diff, sq_diff,
       smallest_sq_diff = std::numeric_limits<double>::max();
   while (begin_index < path.size()) {
-    x_diff = path[begin_index].pose.pose.position.x - pose.pose.position.x;
-    y_diff = path[begin_index].pose.pose.position.y - pose.pose.position.y;
+    x_diff = path[begin_index].pose.position.x - pose.position.x;
+    y_diff = path[begin_index].pose.position.y - pose.position.y;
     sq_diff = x_diff * x_diff + y_diff * y_diff;
     if (sq_diff < smallest_sq_diff) {
       prune_index = begin_index;
