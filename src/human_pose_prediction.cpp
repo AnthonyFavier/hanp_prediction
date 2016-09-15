@@ -138,7 +138,6 @@ void HumanPosePrediction::externalPathsCB(
   ROS_INFO_ONCE_NAMED(NODE_NAME, "hanp_prediction: received human paths");
   external_paths_ = external_paths;
   got_new_human_paths_ = true;
-  ROS_INFO("hp: got new external paths");
 }
 
 bool HumanPosePrediction::predictHumans(
@@ -444,11 +443,23 @@ bool HumanPosePrediction::predictHumansExternal(
             break;
           }
         }
-        last_prune_indices_.erase(predicted_poses.id);
         last_predicted_poses_.push_back(predicted_poses);
+
+        last_prune_indices_.erase(predicted_poses.id);
+
+        for (auto it = tracked_humans.humans.begin();
+             it != tracked_humans.humans.end(); ++it) {
+          if (it->track_id == predicted_poses.id) {
+            tracked_humans.humans.erase(it);
+            break;
+          }
+        }
+        ROS_DEBUG_NAMED(
+            NODE_NAME,
+            "Processed new external path for human %ld with %ld poses",
+            human_path.id, predicted_poses.poses.size());
       }
     }
-    ROS_INFO("hp: processed new external paths");
   }
   got_new_human_paths_ = false;
 
@@ -479,8 +490,10 @@ bool HumanPosePrediction::predictHumansExternal(
           predicted_poses.poses = pruned_path;
           predicted_poses.start_velocity = start_twist;
           res.predicted_humans_poses.push_back(predicted_poses);
-          ROS_INFO("hp: giving path of %ld points from %ld points\n",
-                   predicted_poses.poses.size(), poses.poses.size());
+          ROS_DEBUG_NAMED(
+              NODE_NAME,
+              "Giving path of %ld points from %ld points for human %ld\n",
+              predicted_poses.poses.size(), poses.poses.size(), poses.id);
         }
       }
     }
