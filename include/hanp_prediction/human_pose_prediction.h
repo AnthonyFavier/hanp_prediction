@@ -37,7 +37,6 @@
 
 #include <hanp_msgs/TrackedHumans.h>
 #include <hanp_msgs/TrackedSegmentType.h>
-#include <hanp_msgs/PathArray.h>
 #include <hanp_msgs/HumanPathArray.h>
 #include <hanp_prediction/HumanPosePredict.h>
 #include <tf/transform_listener.h>
