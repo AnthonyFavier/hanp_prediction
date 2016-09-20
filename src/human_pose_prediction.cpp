@@ -481,8 +481,16 @@ bool HumanPosePrediction::predictHumansExternal(
           continue;
         }
 
-        std::vector<geometry_msgs::PoseWithCovarianceStamped> pruned_path(
-            poses.poses.begin() + prune_index, poses.poses.end());
+        // std::vector<geometry_msgs::PoseWithCovarianceStamped> pruned_path(
+        //     poses.poses.begin() + prune_index, poses.poses.end());
+        geometry_msgs::PoseWithCovarianceStamped start_pose_co;
+        start_pose_co.header.stamp = start_pose.header.stamp;
+        start_pose_co.header.frame_id = start_pose.header.frame_id;
+        start_pose_co.pose.pose = start_pose.pose;
+        std::vector<geometry_msgs::PoseWithCovarianceStamped> pruned_path;
+        pruned_path.push_back(start_pose_co);
+        pruned_path.insert(pruned_path.end(), poses.poses.begin() + prune_index,
+                           poses.poses.end());
 
         if (!pruned_path.empty()) {
           hanp_prediction::PredictedPoses predicted_poses;
