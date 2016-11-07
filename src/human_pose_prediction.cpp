@@ -32,6 +32,7 @@
 
 #define HUMANS_SUB_TOPIC "tracked_humans"
 #define EXTERNAL_PATHS_SUB_TOPIC "external_human_paths"
+#define RESET_EXT_PATHS_SERVICE_NAME "reset_external_paths"
 #define PREDICT_SERVICE_NAME "predict_human_poses"
 #define PUBLISH_MARKERS_SRV_NAME "publish_prediction_markers"
 #define PREDICTED_HUMANS_MARKERS_PUB_TOPIC "predicted_human_poses"
@@ -43,6 +44,7 @@
 #include <signal.h>
 
 #include <hanp_prediction/human_pose_prediction.h>
+#include <std_srvs/Empty.h>
 
 namespace hanp_prediction {
 // empty constructor and destructor
@@ -58,6 +60,9 @@ void HumanPosePrediction::initialize() {
                    std::string(HUMANS_SUB_TOPIC));
   private_nh.param("external_paths_sub_topic", external_paths_sub_topic_,
                    std::string(EXTERNAL_PATHS_SUB_TOPIC));
+  private_nh.param("reset_ext_paths_service_name",
+                   reset_ext_paths_service_name_,
+                   std::string(RESET_EXT_PATHS_SERVICE_NAME));
   private_nh.param("predict_service_name", predict_service_name_,
                    std::string(PREDICT_SERVICE_NAME));
   private_nh.param("predicted_humans_markers_pub_topic",
@@ -88,6 +93,8 @@ void HumanPosePrediction::initialize() {
   // initialize services
   predict_humans_server_ = private_nh.advertiseService(
       predict_service_name_, &HumanPosePrediction::predictHumans, this);
+  reset_ext_paths_server_ = private_nh.advertiseService(
+      reset_ext_paths_service_name_, &HumanPosePrediction::resetExtPaths, this);
   publish_markers_srv_ = private_nh.advertiseService(
       publish_markers_srv_name_, &HumanPosePrediction::setPublishMarkers, this);
   showing_markers_ = false;
@@ -587,6 +594,14 @@ size_t HumanPosePrediction::prunePath(
     ++begin_index;
   }
   return prune_index;
+}
+
+bool HumanPosePrediction::resetExtPaths(std_srvs::Empty::Request &req,
+                                        std_srvs::Empty::Response &res) {
+
+  got_new_human_paths_ = false;
+  last_predicted_poses_.clear();
+  return true;
 }
 }
 

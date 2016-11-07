@@ -41,6 +41,7 @@
 #include <hanp_prediction/HumanPosePredict.h>
 #include <tf/transform_listener.h>
 #include <std_srvs/SetBool.h>
+#include <std_srvs/Empty.h>
 
 #include <visualization_msgs/MarkerArray.h>
 
@@ -62,7 +63,8 @@ private:
   ros::Publisher predicted_humans_pub_;
 
   // ros services
-  ros::ServiceServer predict_humans_server_, publish_markers_srv_;
+  ros::ServiceServer predict_humans_server_, reset_ext_paths_server_,
+      publish_markers_srv_;
 
   // dynamic reconfigure variables
   dynamic_reconfigure::Server<HumanPosePredictionConfig> *dsrv_;
@@ -76,8 +78,8 @@ private:
   tf::TransformListener tf_;
 
   std::string tracked_humans_sub_topic_, external_paths_sub_topic_,
-      predict_service_name_, predicted_humans_markers_pub_topic_,
-      publish_markers_srv_name_;
+      reset_ext_paths_service_name_, predict_service_name_,
+      predicted_humans_markers_pub_topic_, publish_markers_srv_name_;
   int default_human_part_;
   bool publish_markers_, showing_markers_, got_new_human_paths_;
 
@@ -108,6 +110,9 @@ private:
   size_t
   prunePath(size_t begin_index, const geometry_msgs::Pose &pose,
             const std::vector<geometry_msgs::PoseWithCovarianceStamped> &path);
+
+  bool resetExtPaths(std_srvs::Empty::Request &req,
+                     std_srvs::Empty::Response &res);
 };
 }
 
