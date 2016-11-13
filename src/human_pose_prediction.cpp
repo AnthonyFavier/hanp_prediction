@@ -36,10 +36,14 @@
 #define PREDICT_SERVICE_NAME "predict_human_poses"
 #define PUBLISH_MARKERS_SRV_NAME "publish_prediction_markers"
 #define PREDICTED_HUMANS_MARKERS_PUB_TOPIC "predicted_human_poses"
+#define GET_PLAN_SRV_NAME "/move_base_node/NavfnROS/make_plan"
 #define DEFAULT_HUMAN_PART hanp_msgs::TrackedSegmentType::TORSO
 #define MAX_HUMAN_MARKERS 100
 #define MIN_MARKER_LIFETIME 1.0
 #define MINIMUM_COVARIANCE_MARKERS 0.1
+#define ROBOT_FRAME_ID "base_footprint"
+#define HUMAN_DIST_BEHIND_ROBOT 1.0 // in meters
+#define HUMAN_ANGLE_BEHIND_ROBOT 3.14
 
 #include <signal.h>
 
@@ -68,10 +72,16 @@ void HumanPosePrediction::initialize() {
   private_nh.param("predicted_humans_markers_pub_topic",
                    predicted_humans_markers_pub_topic_,
                    std::string(PREDICTED_HUMANS_MARKERS_PUB_TOPIC));
+  private_nh.param("get_plan_srv_name", get_plan_srv_name_,
+                   std::string(GET_PLAN_SRV_NAME));
   private_nh.param("publish_markers_srv_name", publish_markers_srv_name_,
                    std::string(PUBLISH_MARKERS_SRV_NAME));
   private_nh.param("default_human_part", default_human_part_,
                    (int)(DEFAULT_HUMAN_PART));
+  private_nh.param("robot_frame_id", robot_frame_id_,
+                   std::string(ROBOT_FRAME_ID));
+  private_nh.param("human_dist_behind_robot", human_dist_behind_robot_,
+                   HUMAN_DIST_BEHIND_ROBOT);
 
   // initialize subscribers and publishers
   tracked_humans_sub_ =
@@ -97,6 +107,8 @@ void HumanPosePrediction::initialize() {
       reset_ext_paths_service_name_, &HumanPosePrediction::resetExtPaths, this);
   publish_markers_srv_ = private_nh.advertiseService(
       publish_markers_srv_name_, &HumanPosePrediction::setPublishMarkers, this);
+  get_plan_client_ =
+      private_nh.serviceClient<nav_msgs::GetPlan>(get_plan_srv_name_, true);
   showing_markers_ = false;
   got_new_human_paths_ = false;
 
@@ -166,6 +178,10 @@ bool HumanPosePrediction::predictHumans(
   case hanp_prediction::HumanPosePredictRequest::EXTERNAL:
     prediction_function =
         boost::bind(&HumanPosePrediction::predictHumansExternal, this, _1, _2);
+    break;
+  case hanp_prediction::HumanPosePredictRequest::BEHIND_ROBOT:
+    prediction_function =
+        boost::bind(&HumanPosePrediction::predictHumansBehind, this, _1, _2);
     break;
   default:
     ROS_ERROR_NAMED(NODE_NAME, "%s: unkonwn prediction type %d", NODE_NAME,
@@ -424,10 +440,123 @@ bool HumanPosePrediction::predictHumansExternal(
     hanp_prediction::HumanPosePredict::Request &req,
     hanp_prediction::HumanPosePredict::Response &res) {
   auto external_paths = external_paths_;
+  return predictHumansFromPaths(req, res, external_paths->paths);
+}
+
+bool HumanPosePrediction::predictHumansBehind(
+    hanp_prediction::HumanPosePredict::Request &req,
+    hanp_prediction::HumanPosePredict::Response &res) {
+  auto now = ros::Time::now();
+  auto tracked_humans = tracked_humans_;
+
+  // first check if path calculation is needed, and for whom
+  std::map<uint64_t, geometry_msgs::PoseStamped> human_starts;
+  for (auto &human : tracked_humans.humans) {
+    bool path_exist = false;
+    for (auto path : behind_paths_.paths) {
+      if (path.id == human.track_id) {
+        path_exist = true;
+      }
+    }
+    if (!path_exist) {
+      // get human pose
+      for (auto &segment : human.segments) {
+        if (segment.type == default_human_part_) {
+          geometry_msgs::PoseStamped human_start;
+          human_start.header.frame_id = tracked_humans.header.frame_id;
+          human_start.header.stamp = now;
+          human_start.pose = segment.pose.pose;
+          human_starts[human.track_id] = human_start;
+          break;
+        }
+      }
+    }
+  }
+
+  if (!human_starts.empty()) {
+    // get robot pose
+    tf::StampedTransform robot_in_humans_frame_tf;
+    bool robot_pose_found = false;
+    try {
+      tf_.lookupTransform(robot_frame_id_, tracked_humans.header.frame_id,
+                          ros::Time(0), robot_in_humans_frame_tf);
+      robot_pose_found = true;
+    } catch (tf::LookupException &ex) {
+      ROS_ERROR_NAMED(NODE_NAME, "No Transform available Error: %s\n",
+                      ex.what());
+    } catch (tf::ConnectivityException &ex) {
+      ROS_ERROR_NAMED(NODE_NAME, "Connectivity Error: %s\n", ex.what());
+    } catch (tf::ExtrapolationException &ex) {
+      ROS_ERROR_NAMED(NODE_NAME, "Extrapolation Error: %s\n", ex.what());
+    }
+
+    if (robot_pose_found) {
+      for (auto &human_starts_kv : human_starts) {
+        nav_msgs::GetPlan get_plan_srv;
+        get_plan_srv.request.start = human_starts_kv.second;
+
+        // calculate human pose behind robot
+        tf::Transform behind_tr;
+        behind_tr.setOrigin(tf::Vector3(-1.0, 0.0, 0.0));
+        behind_tr.setRotation(
+            tf::createQuaternionFromYaw(HUMAN_ANGLE_BEHIND_ROBOT));
+        behind_tr *= robot_in_humans_frame_tf;
+        geometry_msgs::Transform behind_pose;
+        tf::transformTFToMsg(behind_tr, behind_pose);
+
+        get_plan_srv.request.goal.header.frame_id =
+            tracked_humans.header.frame_id;
+        get_plan_srv.request.goal.header.stamp = now;
+        get_plan_srv.request.goal.pose.position.x = behind_pose.translation.x;
+        get_plan_srv.request.goal.pose.position.y = behind_pose.translation.y;
+        get_plan_srv.request.goal.pose.position.z = behind_pose.translation.z;
+        get_plan_srv.request.goal.pose.orientation = behind_pose.rotation;
+
+        ROS_DEBUG_NAMED(NODE_NAME, "human\nstart: x=%.2f, y=%.2f, theta=%.2f\n "
+                                  "goal: x=%.2f, y=%.2f, theta=%.2f",
+                       get_plan_srv.request.start.pose.position.x,
+                       get_plan_srv.request.start.pose.position.y,
+                       tf::getYaw(get_plan_srv.request.start.pose.orientation),
+                       get_plan_srv.request.goal.pose.position.x,
+                       get_plan_srv.request.goal.pose.position.y,
+                       tf::getYaw(get_plan_srv.request.goal.pose.orientation));
+
+        // make plan for human
+        if (get_plan_client_) {
+          if (get_plan_client_.call(get_plan_srv)) {
+            hanp_msgs::HumanPath human_path;
+            human_path.header.frame_id = tracked_humans.header.frame_id;
+            human_path.header.stamp = now;
+            human_path.id = human_starts_kv.first;
+            human_path.path = get_plan_srv.response.plan;
+            behind_paths_.paths.push_back(human_path);
+          } else {
+            ROS_WARN_NAMED(NODE_NAME, "Failed to call %s service",
+                           get_plan_srv_name_.c_str());
+          }
+        } else {
+          ROS_WARN_NAMED(NODE_NAME,
+                         "%s service does not exist, re-trying to subscribe",
+                         get_plan_srv_name_.c_str());
+          ros::NodeHandle private_nh("~/");
+          get_plan_client_ = private_nh.serviceClient<nav_msgs::GetPlan>(
+              get_plan_srv_name_, true);
+        }
+      }
+    }
+  }
+
+  return predictHumansFromPaths(req, res, behind_paths_.paths);
+}
+
+bool HumanPosePrediction::predictHumansFromPaths(
+    hanp_prediction::HumanPosePredict::Request &req,
+    hanp_prediction::HumanPosePredict::Response &res,
+    const std::vector<hanp_msgs::HumanPath> &paths) {
   auto tracked_humans = tracked_humans_;
 
   if (got_new_human_paths_) {
-    for (auto human_path : external_paths->paths) {
+    for (auto human_path : paths) {
       auto &poses = human_path.path.poses;
       if (!poses.empty()) {
         hanp_prediction::PredictedPoses predicted_poses;
@@ -601,6 +730,7 @@ bool HumanPosePrediction::resetExtPaths(std_srvs::Empty::Request &req,
 
   got_new_human_paths_ = false;
   last_predicted_poses_.clear();
+  behind_paths_.paths.clear();
   return true;
 }
 }

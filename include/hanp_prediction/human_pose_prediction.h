@@ -42,6 +42,7 @@
 #include <tf/transform_listener.h>
 #include <std_srvs/SetBool.h>
 #include <std_srvs/Empty.h>
+#include <nav_msgs/GetPlan.h>
 
 #include <visualization_msgs/MarkerArray.h>
 
@@ -65,6 +66,7 @@ private:
   // ros services
   ros::ServiceServer predict_humans_server_, reset_ext_paths_server_,
       publish_markers_srv_;
+  ros::ServiceClient get_plan_client_;
 
   // dynamic reconfigure variables
   dynamic_reconfigure::Server<HumanPosePredictionConfig> *dsrv_;
@@ -79,12 +81,16 @@ private:
 
   std::string tracked_humans_sub_topic_, external_paths_sub_topic_,
       reset_ext_paths_service_name_, predict_service_name_,
-      predicted_humans_markers_pub_topic_, publish_markers_srv_name_;
+      predicted_humans_markers_pub_topic_, publish_markers_srv_name_,
+      get_plan_srv_name_;
   int default_human_part_;
   bool publish_markers_, showing_markers_, got_new_human_paths_;
+  std::string robot_frame_id_;
+  double human_dist_behind_robot_;
 
   hanp_msgs::TrackedHumans tracked_humans_;
   hanp_msgs::HumanPathArray::ConstPtr external_paths_;
+  hanp_msgs::HumanPathArray behind_paths_;
   std::vector<hanp_prediction::PredictedPoses> last_predicted_poses_;
   std::map<uint64_t, size_t> last_prune_indices_;
   std::vector<double> velscale_scales_;
@@ -100,6 +106,11 @@ private:
                            hanp_prediction::HumanPosePredict::Response &res);
   bool predictHumansExternal(hanp_prediction::HumanPosePredict::Request &req,
                              hanp_prediction::HumanPosePredict::Response &res);
+  bool predictHumansBehind(hanp_prediction::HumanPosePredict::Request &req,
+                           hanp_prediction::HumanPosePredict::Response &res);
+  bool predictHumansFromPaths(hanp_prediction::HumanPosePredict::Request &req,
+                              hanp_prediction::HumanPosePredict::Response &res,
+                              const std::vector<hanp_msgs::HumanPath> &paths);
   bool setPublishMarkers(std_srvs::SetBool::Request &req,
                          std_srvs::SetBool::Response &res);
 

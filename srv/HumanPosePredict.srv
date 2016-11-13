@@ -2,6 +2,7 @@
 uint8 VELOCITY_SCALE=0
 uint8 VELOCITY_OBSTACLE=1
 uint8 EXTERNAL=2
+uint8 BEHIND_ROBOT=3
 # request fields
 uint8                               type
 float64[]                           predict_times
