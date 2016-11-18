@@ -439,8 +439,13 @@ bool HumanPosePrediction::predictHumansVelObs(
 bool HumanPosePrediction::predictHumansExternal(
     hanp_prediction::HumanPosePredict::Request &req,
     hanp_prediction::HumanPosePredict::Response &res) {
+  if (external_paths_) {
   auto external_paths = external_paths_;
   return predictHumansFromPaths(req, res, external_paths->paths);
+  } else {
+    std::vector<hanp_msgs::HumanPath> empty_paths;
+    return predictHumansFromPaths(req, res, empty_paths);
+}
 }
 
 bool HumanPosePrediction::predictHumansBehind(
