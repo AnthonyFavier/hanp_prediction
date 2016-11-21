@@ -85,7 +85,7 @@ private:
       get_plan_srv_name_;
   int default_human_part_;
   bool publish_markers_, showing_markers_, got_new_human_paths_;
-  std::string robot_frame_id_;
+  std::string robot_frame_id_, map_frame_id_;
   double human_dist_behind_robot_;
 
   hanp_msgs::TrackedHumans tracked_humans_;
