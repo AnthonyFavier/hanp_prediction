@@ -88,12 +88,25 @@ private:
   std::string robot_frame_id_, map_frame_id_;
   double human_dist_behind_robot_;
 
+  struct HumanPathVel {
+    uint64_t id;
+    nav_msgs::Path path;
+    geometry_msgs::TwistWithCovariance start_vel;
+  };
+
+  struct HumanStartPoseVel {
+    uint64_t id;
+    geometry_msgs::PoseStamped pose;
+    geometry_msgs::TwistWithCovariance vel;
+  };
+
   hanp_msgs::TrackedHumans tracked_humans_;
   hanp_msgs::HumanPathArray::ConstPtr external_paths_;
-  hanp_msgs::HumanPathArray behind_paths_;
+  std::vector<HumanPathVel> behind_path_vels_;
   std::vector<hanp_prediction::PredictedPoses> last_predicted_poses_;
   std::map<uint64_t, size_t> last_prune_indices_;
   std::vector<double> velscale_scales_;
+  std::map<uint64_t, int> last_markers_size_map;
   double velscale_angle_, velscale_mul_, velobs_mul_, velobs_min_rad_,
       velobs_max_rad_, velobs_max_rad_time_;
   visualization_msgs::MarkerArray predicted_humans_markers_;
@@ -110,7 +123,7 @@ private:
                            hanp_prediction::HumanPosePredict::Response &res);
   bool predictHumansFromPaths(hanp_prediction::HumanPosePredict::Request &req,
                               hanp_prediction::HumanPosePredict::Response &res,
-                              const std::vector<hanp_msgs::HumanPath> &paths);
+                              const std::vector<HumanPathVel> &path_vels);
   bool setPublishMarkers(std_srvs::SetBool::Request &req,
                          std_srvs::SetBool::Response &res);
 
