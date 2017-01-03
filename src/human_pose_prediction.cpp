@@ -45,6 +45,7 @@
 #define MAP_FRAME_ID "map"
 #define HUMAN_DIST_BEHIND_ROBOT 1.0 // in meters
 #define HUMAN_ANGLE_BEHIND_ROBOT 3.14
+#define ANG_VEL_EPS 0.001
 
 #include <signal.h>
 
@@ -409,16 +410,42 @@ bool HumanPosePrediction::predictHumansVelObs(
           }
 
           geometry_msgs::PoseWithCovarianceStamped predicted_pose;
-          tf::Vector3 predict_lin_vel(linear_vel * predict_time * velobs_mul_);
           predicted_pose.header.frame_id = track_frame;
           predicted_pose.header.stamp =
               track_time + ros::Duration(predict_time);
-          predicted_pose.pose.pose.position.x =
-              segment.pose.pose.position.x + predict_lin_vel[0];
-          predicted_pose.pose.pose.position.y =
-              segment.pose.pose.position.y + predict_lin_vel[1];
-          predicted_pose.pose.pose.orientation = segment.pose.pose.orientation;
-          double xy_vel = hypot(predict_lin_vel[0], predict_lin_vel[1]);
+
+          //TODO: make use of angle based prediction optional
+
+          if (std::abs(segment.twist.twist.angular.z) > ANG_VEL_EPS) {
+            // velocity multiplier is only applied to linear velocities
+            double r =
+                (std::hypot(linear_vel[0], linear_vel[1]) * velobs_mul_) /
+                segment.twist.twist.angular.z;
+            double theta = segment.twist.twist.angular.z * predict_time;
+            double crd = r * 2 * std::sin(theta / 2);
+            double alpha =
+                std::atan2(linear_vel[1], linear_vel[0]) + (theta / 2);
+            predicted_pose.pose.pose.position.x =
+                segment.pose.pose.position.x + crd * std::cos(alpha);
+            predicted_pose.pose.pose.position.y =
+                segment.pose.pose.position.y + crd * std::sin(alpha);
+            predicted_pose.pose.pose.orientation =
+                tf::createQuaternionMsgFromYaw(
+                    tf::getYaw(segment.pose.pose.orientation) + theta);
+          } else {
+            predicted_pose.pose.pose.position.x =
+                segment.pose.pose.position.x +
+                linear_vel[0] * predict_time * velobs_mul_;
+            predicted_pose.pose.pose.position.y =
+                segment.pose.pose.position.y +
+                linear_vel[1] * predict_time * velobs_mul_;
+            predicted_pose.pose.pose.orientation =
+                segment.pose.pose.orientation;
+          }
+
+          // not using velocity multiplier for covariance matrix
+          double xy_vel =
+              hypot(linear_vel[0] * predict_time, linear_vel[1] * predict_time);
           // storing only x, y covariance in diagonal matrix
           predicted_pose.pose.covariance[0] =
               velobs_min_rad_ +
