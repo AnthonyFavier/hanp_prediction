@@ -56,7 +56,8 @@ public:
 
   void setParams(std::vector<double> velscale_scales, double velscale_angle,
                  double velscale_mul, double velobs_mul, double velobs_min_rad,
-                 double velobs_max_rad, double velobs_max_rad_time);
+                 double velobs_max_rad, double velobs_max_rad_time,
+                 bool velobs_use_ang);
 
 private:
   // ros subscribers and publishers
@@ -109,6 +110,7 @@ private:
   std::map<uint64_t, int> last_markers_size_map;
   double velscale_angle_, velscale_mul_, velobs_mul_, velobs_min_rad_,
       velobs_max_rad_, velobs_max_rad_time_;
+  bool velobs_use_ang_;
   visualization_msgs::MarkerArray predicted_humans_markers_;
 
   bool predictHumans(hanp_prediction::HumanPosePredict::Request &req,

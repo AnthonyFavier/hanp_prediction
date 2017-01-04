@@ -122,7 +122,8 @@ void HumanPosePrediction::setParams(std::vector<double> velscale_scales,
                                     double velscale_angle, double velscale_mul,
                                     double velobs_mul, double velobs_min_rad,
                                     double velobs_max_rad,
-                                    double velobs_max_rad_time) {
+                                    double velobs_max_rad_time,
+                                    bool velobs_use_ang) {
   velscale_scales_ = velscale_scales;
   velscale_angle_ = velscale_angle;
   velscale_mul_ = velscale_mul;
@@ -130,15 +131,15 @@ void HumanPosePrediction::setParams(std::vector<double> velscale_scales,
   velobs_min_rad_ = velobs_min_rad;
   velobs_max_rad_ = velobs_max_rad;
   velobs_max_rad_time_ = velobs_max_rad_time;
+  velobs_use_ang_ = velobs_use_ang;
 
-  ROS_DEBUG_NAMED(
-      NODE_NAME,
-      "parameters set: velocity-scale: scales=[%f, %f, %f], angle=%f, "
-      "velscale-mul=%f, velobs-mul=%f"
-      "velocity-obstacle: min-radius:%f, max-radius:%f, max-radius-time=%f",
-      velscale_scales_[0], velscale_scales_[1], velscale_scales_[2],
-      velscale_angle_, velscale_mul_, velobs_mul_, velobs_min_rad_,
-      velobs_max_rad_, velobs_max_rad_time_);
+  ROS_DEBUG_NAMED(NODE_NAME, "parameters set: velocity-scale: scales=[%f, %f, "
+                             "%f], angle=%f, velscale-mul=%f, velobs-mul=%f "
+                             "velocity-obstacle: min-radius:%f, max-radius:%f, "
+                             "max-radius-time=%f use-ang=%d",
+                  velscale_scales_[0], velscale_scales_[1], velscale_scales_[2],
+                  velscale_angle_, velscale_mul_, velobs_mul_, velobs_min_rad_,
+                  velobs_max_rad_, velobs_max_rad_time_, velobs_use_ang_);
 }
 
 void HumanPosePrediction::reconfigureCB(HumanPosePredictionConfig &config,
@@ -146,7 +147,8 @@ void HumanPosePrediction::reconfigureCB(HumanPosePredictionConfig &config,
   setParams(
       {config.velscale_lower, config.velscale_nominal, config.velscale_higher},
       config.velscale_angle, config.velscale_mul, config.velobs_mul,
-      config.velobs_min_rad, config.velobs_max_rad, config.velobs_max_rad_time);
+      config.velobs_min_rad, config.velobs_max_rad, config.velobs_max_rad_time,
+      config.velobs_use_ang);
 }
 
 void HumanPosePrediction::trackedHumansCB(
@@ -414,9 +416,7 @@ bool HumanPosePrediction::predictHumansVelObs(
           predicted_pose.header.stamp =
               track_time + ros::Duration(predict_time);
 
-          //TODO: make use of angle based prediction optional
-
-          if (std::abs(segment.twist.twist.angular.z) > ANG_VEL_EPS) {
+          if (velobs_use_ang_ && std::abs(segment.twist.twist.angular.z) > ANG_VEL_EPS) {
             // velocity multiplier is only applied to linear velocities
             double r =
                 (std::hypot(linear_vel[0], linear_vel[1]) * velobs_mul_) /
