@@ -87,7 +87,7 @@ private:
   int default_human_part_;
   bool publish_markers_, showing_markers_, got_new_human_paths_;
   std::string robot_frame_id_, map_frame_id_;
-  double human_dist_behind_robot_;
+  double human_dist_behind_robot_, human_angle_behind_robot_;
 
   struct HumanPathVel {
     uint64_t id;

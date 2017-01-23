@@ -85,6 +85,8 @@ void HumanPosePrediction::initialize() {
   private_nh.param("map_frame_id", map_frame_id_, std::string(MAP_FRAME_ID));
   private_nh.param("human_dist_behind_robot", human_dist_behind_robot_,
                    HUMAN_DIST_BEHIND_ROBOT);
+  private_nh.param("human_angle_behind_robot", human_angle_behind_robot_,
+                   HUMAN_ANGLE_BEHIND_ROBOT);
 
   // initialize subscribers and publishers
   tracked_humans_sub_ =
@@ -416,7 +418,8 @@ bool HumanPosePrediction::predictHumansVelObs(
           predicted_pose.header.stamp =
               track_time + ros::Duration(predict_time);
 
-          if (velobs_use_ang_ && std::abs(segment.twist.twist.angular.z) > ANG_VEL_EPS) {
+          if (velobs_use_ang_ &&
+              std::abs(segment.twist.twist.angular.z) > ANG_VEL_EPS) {
             // velocity multiplier is only applied to linear velocities
             double r =
                 (std::hypot(linear_vel[0], linear_vel[1]) * velobs_mul_) /
@@ -578,9 +581,9 @@ bool HumanPosePrediction::predictHumansBehind(
 
         // calculate human pose behind robot
         tf::Transform behind_tr;
-        behind_tr.setOrigin(tf::Vector3(-1.0, 0.0, 0.0));
+        behind_tr.setOrigin(tf::Vector3(-human_dist_behind_robot_, 0.0, 0.0));
         behind_tr.setRotation(
-            tf::createQuaternionFromYaw(HUMAN_ANGLE_BEHIND_ROBOT));
+            tf::createQuaternionFromYaw(human_angle_behind_robot_));
         behind_tr = robot_to_map_tf * behind_tr;
         geometry_msgs::Transform behind_pose;
         tf::transformTFToMsg(behind_tr, behind_pose);
