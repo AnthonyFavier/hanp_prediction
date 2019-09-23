@@ -36,7 +36,7 @@
 #define PREDICT_SERVICE_NAME "predict_human_poses"
 #define PUBLISH_MARKERS_SRV_NAME "publish_prediction_markers"
 #define PREDICTED_HUMANS_MARKERS_PUB_TOPIC "predicted_human_poses"
-#define GET_PLAN_SRV_NAME "/move_base_node/NavfnROS/make_plan"
+#define GET_PLAN_SRV_NAME "/move_base_node/GlobalPlanner/make_plan"
 #define DEFAULT_HUMAN_PART hanp_msgs::TrackedSegmentType::TORSO
 #define MAX_HUMAN_MARKERS 1000
 #define MIN_MARKER_LIFETIME 1.0
@@ -95,6 +95,8 @@ void HumanPosePrediction::initialize() {
   external_paths_sub_ =
       private_nh.subscribe(external_paths_sub_topic_, 1,
                            &HumanPosePrediction::externalPathsCB, this);
+  external_trajs_sub_ = private_nh.subscribe("external_human_trajs", 1, &HumanPosePrediction::externalTrajsCB, this);
+
   predicted_humans_pub_ = private_nh.advertise<visualization_msgs::MarkerArray>(
       predicted_humans_markers_pub_topic_, 1);
 
@@ -164,6 +166,25 @@ void HumanPosePrediction::externalPathsCB(
   ROS_INFO_ONCE_NAMED(NODE_NAME, "hanp_prediction: received human paths");
   external_paths_ = external_paths;
   got_new_human_paths_ = true;
+}
+
+void HumanPosePrediction::externalTrajsCB(
+    const hanp_msgs::HumanTrajectoryArrayConstPtr &traj_array) {
+  // std::cout << "I am in MoveHumans::controllerPathsCB" << '\n';
+  boost::mutex::scoped_lock(external_trajs_mutex_);
+  external_trajs_ = traj_array;
+  // got_new_human_trajs_ = true;
+  hanp_msgs::HumanPathArray external_paths;
+  external_paths.header.frame_id = traj_array.header.frame_id;
+  for(auto &trajs : traj_array->trajectories){
+    hanp_msgs::HumanPath path;
+    path.header.frame_id = trajs.frame_id;
+    path.header.id = trajs.id;
+    for(auto &point : trajs->trajectory.points){
+
+    }
+  }
+
 }
 
 bool HumanPosePrediction::predictHumans(
@@ -513,6 +534,40 @@ bool HumanPosePrediction::predictHumansExternal(
     return predictHumansFromPaths(req, res, empty_path_vels);
   }
 }
+
+// bool HumanPosePrediction::predictHumansExternalTrajs(
+//     hanp_prediction::HumanPosePredict::Request &req,
+//     hanp_prediction::HumanPosePredict::Response &res) {
+//   if (external_trajs_) {
+//     auto external_trajs = external_trajs_;
+//     auto tracked_humans = tracked_humans_;
+//
+//     std::vector<HumanTrajVel> human_traj_vel_array;
+//     for (auto &traj : external_trajs->trajectories) {
+//       HumanTrajVel human_traj_vel{.id = traj.id, .traj = traj.points[traj.id]};
+//
+//       // set starting velocity of the human if we find them
+//       // we do not add current pose at first pose in this case
+//       for (auto &human : tracked_humans.humans) {
+//         if (human.track_id == traj.id) {
+//           for (auto &segment : human.segments) {
+//             if (segment.type == default_human_part_) {
+//               human_traj_vel.start_vel = segment.twist;
+//               break;
+//             }
+//           }
+//           break;
+//         }
+//       }
+//       human_traj_vel_array.push_back(human_traj_vel);
+//     }
+//
+//     return predictHumansFromTrajs(req, res, human_path_vel_array);
+//   } else {
+//     std::vector<HumanTrajVel> empty_path_vels;
+//     return predictHumansFromTrajs(req, res, empty_path_vels);
+//   }
+// }
 
 bool HumanPosePrediction::predictHumansBehind(
     hanp_prediction::HumanPosePredict::Request &req,

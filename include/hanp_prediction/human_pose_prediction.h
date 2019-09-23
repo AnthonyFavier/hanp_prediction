@@ -61,7 +61,7 @@ public:
 
 private:
   // ros subscribers and publishers
-  ros::Subscriber tracked_humans_sub_, external_paths_sub_;
+  ros::Subscriber tracked_humans_sub_, external_paths_sub_, external_trajs_sub_;
   ros::Publisher predicted_humans_pub_;
 
   // ros services
@@ -95,6 +95,12 @@ private:
     geometry_msgs::TwistWithCovariance start_vel;
   };
 
+  struct HumanTrajVel {
+    uint64_t id;
+    hanp_msgs::TrajectoryPoint traj;
+    geometry_msgs::TwistWithCovariance start_vel;
+  };
+
   struct HumanStartPoseVel {
     uint64_t id;
     geometry_msgs::PoseStamped pose;
@@ -103,6 +109,8 @@ private:
 
   hanp_msgs::TrackedHumans tracked_humans_;
   hanp_msgs::HumanPathArray::ConstPtr external_paths_;
+  hanp_msgs::HumanTrajectoryArrayConstPtr external_trajs_;
+
   std::vector<HumanPathVel> behind_path_vels_;
   std::vector<hanp_prediction::PredictedPoses> last_predicted_poses_;
   std::map<uint64_t, size_t> last_prune_indices_;
@@ -133,6 +141,8 @@ private:
                           const uint64_t &human_id, const std::string &to_frame,
                           geometry_msgs::PoseStamped &pose,
                           geometry_msgs::TwistStamped &twist);
+  void externalTrajsCB(const hanp_msgs::HumanTrajectoryArrayConstPtr &traj_array);
+
   size_t
   prunePath(size_t begin_index, const geometry_msgs::Pose &pose,
             const std::vector<geometry_msgs::PoseWithCovarianceStamped> &path);
