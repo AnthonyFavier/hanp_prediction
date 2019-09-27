@@ -172,19 +172,33 @@ void HumanPosePrediction::externalTrajsCB(
     const hanp_msgs::HumanTrajectoryArrayConstPtr &traj_array) {
   // std::cout << "I am in MoveHumans::controllerPathsCB" << '\n';
   boost::mutex::scoped_lock(external_trajs_mutex_);
-  external_trajs_ = traj_array;
+  // external_trajs_ = traj_array;
   // got_new_human_trajs_ = true;
   hanp_msgs::HumanPathArray external_paths;
-  external_paths.header.frame_id = traj_array.header.frame_id;
+  external_paths.header = traj_array->header;
+
   for(auto &trajs : traj_array->trajectories){
     hanp_msgs::HumanPath path;
-    path.header.frame_id = trajs.frame_id;
-    path.header.id = trajs.id;
-    for(auto &point : trajs->trajectory.points){
+    nav_msgs::Path nav_path;
 
+    path.header = trajs.header;
+    path.id = trajs.id;
+    // path.path = nav_path;
+
+    for(auto &point : trajs.trajectory.points){
+      geometry_msgs::PoseStamped pose;
+      pose.pose.position.x = point.transform.translation.x;
+      pose.pose.position.y = point.transform.translation.y;
+      pose.pose.position.z = point.transform.translation.z;
+      pose.pose.orientation = point.transform.rotation;
+      nav_path.poses.push_back(pose);
     }
+    path.path = nav_path;
+    external_paths.paths.push_back(path);
   }
 
+  external_paths2_ = external_paths;
+  // got_new_human_paths_ = true;
 }
 
 bool HumanPosePrediction::predictHumans(
@@ -505,6 +519,7 @@ bool HumanPosePrediction::predictHumansExternal(
     hanp_prediction::HumanPosePredict::Request &req,
     hanp_prediction::HumanPosePredict::Response &res) {
   if (external_paths_) {
+    std::cout << "Entered External Paths" << '\n';
     auto external_paths = external_paths_;
     auto tracked_humans = tracked_humans_;
 
@@ -608,10 +623,10 @@ bool HumanPosePrediction::predictHumansBehind(
     tf::StampedTransform robot_to_map_tf, human_to_map_tf;
     bool transforms_found = false;
     try {
-      tf_.lookupTransform(map_frame_id_, robot_frame_id_, ros::Time(0),
+      tf_.lookupTransform(map_frame_id_, robot_frame_id_, ros::Time::now(),
                           robot_to_map_tf);
       tf_.lookupTransform(map_frame_id_, tracked_humans.header.frame_id,
-                          ros::Time(0), human_to_map_tf);
+                          ros::Time::now(), human_to_map_tf);
       transforms_found = true;
     } catch (tf::LookupException &ex) {
       ROS_ERROR_NAMED(NODE_NAME, "No Transform available Error: %s\n",
@@ -853,15 +868,15 @@ bool HumanPosePrediction::transformPoseTwist(
             tf::poseStampedMsgToTF(pose_ut, pose_tf);
             tf::StampedTransform start_pose_to_plan_transform;
             tf_.waitForTransform(to_frame, pose_ut.header.frame_id,
-                                 ros::Time(0), ros::Duration(0.5));
-            tf_.lookupTransform(to_frame, pose_ut.header.frame_id, ros::Time(0),
+                                 ros::Time::now(), ros::Duration(0.5));
+            tf_.lookupTransform(to_frame, pose_ut.header.frame_id, ros::Time::now(),
                                 start_pose_to_plan_transform);
             pose_tf.setData(start_pose_to_plan_transform * pose_tf);
             pose_tf.frame_id_ = to_frame;
             tf::poseStampedTFToMsg(pose_tf, pose);
 
             geometry_msgs::Twist start_twist_to_plan_transform;
-            tf_.lookupTwist(to_frame, twist.header.frame_id, ros::Time(0),
+            tf_.lookupTwist(to_frame, twist.header.frame_id, ros::Time::now(),
                             ros::Duration(0.1), start_twist_to_plan_transform);
             twist.twist.linear.x -= start_twist_to_plan_transform.linear.x;
             twist.twist.linear.y -= start_twist_to_plan_transform.linear.y;

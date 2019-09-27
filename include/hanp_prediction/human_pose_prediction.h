@@ -38,6 +38,8 @@
 #include <hanp_msgs/TrackedHumans.h>
 #include <hanp_msgs/TrackedSegmentType.h>
 #include <hanp_msgs/HumanPathArray.h>
+#include <hanp_msgs/HumanTrajectory.h>
+#include <hanp_msgs/HumanTrajectoryArray.h>
 #include <hanp_prediction/HumanPosePredict.h>
 #include <tf/transform_listener.h>
 #include <std_srvs/SetBool.h>
@@ -109,6 +111,7 @@ private:
 
   hanp_msgs::TrackedHumans tracked_humans_;
   hanp_msgs::HumanPathArray::ConstPtr external_paths_;
+  hanp_msgs::HumanPathArray external_paths2_;
   hanp_msgs::HumanTrajectoryArrayConstPtr external_trajs_;
 
   std::vector<HumanPathVel> behind_path_vels_;
