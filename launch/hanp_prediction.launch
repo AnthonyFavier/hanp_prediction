@@ -1,7 +1,11 @@
 <launch>
-    <node pkg="hanp_prediction" type="human_pose_prediction" name="human_pose_prediction" output="screen">
-        <!-- <remap from="/human_pose_prediction/tracked_humans" to="/tracked_humans"/> -->
-        <!-- <param name="velscale_mul" value="3.0"/>  -->
-        <!-- <param name="velobs_mul" value="0.7"/> -->
+    <node pkg="hanp_prediction" type="human_pose_prediction" name="human_pose_prediction" output="screen" >
+      <!-- <remap from="/human_pose_prediction/tracked_humans" to="/fake_humans_publisher/humans"/> -->
+      <remap from="/human_pose_prediction/tracked_humans" to="/move_humans_node/humans"/>
+      <remap from="/human_pose_prediction/tracked_humans" to="/tracked_humans"/>
+      <remap from="/human_pose_prediction/external_human_paths" to="/humans_sim_node/MultiGoalPlanner/plans"/>
+      <remap from="/human_pose_prediction/external_human_trajs" to="/move_base_node/TebLocalPlannerROS/human_local_trajs"/>
+      <param name="velobs_mul" value="1.0"/>
+      <param name="velscale_mul" value="2.0"/>
     </node>
 </launch>

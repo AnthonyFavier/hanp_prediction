@@ -63,8 +63,9 @@ public:
 
 private:
   // ros subscribers and publishers
-  ros::Subscriber tracked_humans_sub_, external_paths_sub_, external_trajs_sub_;
+  ros::Subscriber tracked_humans_sub_, external_paths_sub_, external_trajs_sub_,robot_pos_sub_, predicted_goal_sub_;
   ros::Publisher predicted_humans_pub_;
+  bool done_cfg;
 
   // ros services
   ros::ServiceServer predict_humans_server_, reset_ext_paths_server_,
@@ -87,7 +88,7 @@ private:
       predicted_humans_markers_pub_topic_, publish_markers_srv_name_,
       get_plan_srv_name_;
   int default_human_part_;
-  bool publish_markers_, showing_markers_, got_new_human_paths_;
+  bool publish_markers_, showing_markers_, got_new_human_paths_, got_new_goal;
   std::string robot_frame_id_, map_frame_id_;
   double human_dist_behind_robot_, human_angle_behind_robot_;
 
@@ -111,6 +112,7 @@ private:
 
   hanp_msgs::TrackedHumans tracked_humans_;
   hanp_msgs::HumanPathArray::ConstPtr external_paths_;
+  geometry_msgs::PoseStamped::ConstPtr predicted_goal_;
   hanp_msgs::HumanPathArray external_paths2_;
   hanp_msgs::HumanTrajectoryArrayConstPtr external_trajs_;
 
@@ -124,6 +126,19 @@ private:
   bool velobs_use_ang_;
   visualization_msgs::MarkerArray predicted_humans_markers_;
 
+  // std::vector<geometry_msgs::Point> human_goals;
+  // std::vector<double> human_goals_x{1.5, 7.0, 9.0, 10.5, 1.5, 10.3, 8.5};
+  // std::vector<double> human_goals_y{2.0, 8.0, 12.5, 15.0, 15.0, 1.5, -4.5};
+  //
+  // //set the goals
+  // for(int i=0;i<human_goals_x.size();i++){
+  //   geometry_msgs::Point point;
+  //   point.x = human_goals_x[i];
+  //   point.y = human_goals_y[i];
+  //   point.z = 0.0;
+  //   human_goals.push_back(point);
+  // }
+
   bool predictHumans(hanp_prediction::HumanPosePredict::Request &req,
                      hanp_prediction::HumanPosePredict::Response &res);
   bool predictHumansVelScale(hanp_prediction::HumanPosePredict::Request &req,
@@ -134,6 +149,8 @@ private:
                              hanp_prediction::HumanPosePredict::Response &res);
   bool predictHumansBehind(hanp_prediction::HumanPosePredict::Request &req,
                            hanp_prediction::HumanPosePredict::Response &res);
+  bool predictHumansGoal(hanp_prediction::HumanPosePredict::Request &req,
+			   hanp_prediction::HumanPosePredict::Response &res);
   bool predictHumansFromPaths(hanp_prediction::HumanPosePredict::Request &req,
                               hanp_prediction::HumanPosePredict::Response &res,
                               const std::vector<HumanPathVel> &path_vels);
@@ -145,6 +162,10 @@ private:
                           geometry_msgs::PoseStamped &pose,
                           geometry_msgs::TwistStamped &twist);
   void externalTrajsCB(const hanp_msgs::HumanTrajectoryArrayConstPtr &traj_array);
+
+  void predictedGoalCB(const geometry_msgs::PoseStamped::ConstPtr& predicted_goal);
+
+
 
   size_t
   prunePath(size_t begin_index, const geometry_msgs::Pose &pose,
