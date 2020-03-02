@@ -102,15 +102,15 @@ class PredictGoal():
             self.predicted_goal.pose.position.y = self.goals_y[idx]
             self.predicted_goal.pose.position.z = 0.0
             self.predicted_goal.pose.orientation = self.current_poses[i][0].orientation
-        
+
             if self.last_idx != idx:
                 p_goal.changed = True
                 self.changed = True
-        
+
         self.last_idx = idx
         p_goal.goal = self.predicted_goal
         self.goal_pub_.publish(p_goal)
-    
+
     def goal_changed(self,req):
         if self.changed:
             self.changed = False
