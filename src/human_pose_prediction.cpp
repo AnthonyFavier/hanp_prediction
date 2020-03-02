@@ -56,6 +56,9 @@
 
 #include <hanp_prediction/human_pose_prediction.h>
 #include <std_srvs/Empty.h>
+#include <std_srvs/TriggerRequest.h>
+#include <std_srvs/TriggerResponse.h>
+#include <std_srvs/Trigger.h>
 
 namespace hanp_prediction {
 // empty constructor and destructor
@@ -123,6 +126,7 @@ void HumanPosePrediction::initialize() {
       publish_markers_srv_name_, &HumanPosePrediction::setPublishMarkers, this);
   get_plan_client_ =
       private_nh.serviceClient<nav_msgs::GetPlan>(get_plan_srv_name_, true);
+  goal_change_srv_  = private_nh.serviceClient<std_srvs::Trigger>("/goal_changed");
   showing_markers_ = false;
   got_new_human_paths_ = false;
   got_new_goal = false;
@@ -177,9 +181,9 @@ void HumanPosePrediction::externalPathsCB(
   got_new_human_paths_ = true;
 }
 
-void HumanPosePrediction::predictedGoalCB(const geometry_msgs::PoseStamped::ConstPtr& predicted_goal){
-  predicted_goal_ = predicted_goal;
+void HumanPosePrediction::predictedGoalCB(const hanp_prediction::PredictedGoal::ConstPtr &predicted_goal){
   ROS_INFO_ONCE_NAMED(NODE_NAME, "hanp_prediction: received predicted goal");
+  predicted_goal_ = predicted_goal;
   got_new_goal = true;
 }
 
@@ -695,6 +699,7 @@ bool HumanPosePrediction::predictHumansBehind(
                         get_plan_srv.request.goal.pose.position.x,
                         get_plan_srv.request.goal.pose.position.y,
                         tf::getYaw(get_plan_srv.request.goal.pose.orientation));
+        std::cout << "I am here 3 " << '\n';
 
         // make plan for human
         if (get_plan_client_) {
@@ -738,6 +743,7 @@ bool HumanPosePrediction::predictHumansGoal(
   auto tracked_humans = tracked_humans_;
 
   // first check if path calculation is needed, and for whom
+
   std::vector<HumanStartPoseVel> human_start_pose_vels;
   for (auto &human : tracked_humans.humans) {
     bool path_exist = false;
@@ -747,7 +753,10 @@ bool HumanPosePrediction::predictHumansGoal(
         break;
       }
     }
-    if (!path_exist) {
+    std_srvs::Trigger g_srv;
+    goal_change_srv_.call(g_srv);
+	    
+    if (!path_exist || g_srv.response.success) {
       // get human pose
       for (auto &segment : human.segments) {
         if (segment.type == default_human_part_) {
@@ -807,10 +816,10 @@ bool HumanPosePrediction::predictHumansGoal(
 
         get_plan_srv.request.goal.header.frame_id = map_frame_id_;
         get_plan_srv.request.goal.header.stamp = now;
-        get_plan_srv.request.goal.pose.position.x = predicted_goal_->pose.position.x;
-        get_plan_srv.request.goal.pose.position.y = predicted_goal_->pose.position.y;
-        get_plan_srv.request.goal.pose.position.z = predicted_goal_->pose.position.z;
-        get_plan_srv.request.goal.pose.orientation = predicted_goal_->pose.orientation;
+        get_plan_srv.request.goal.pose.position.x = predicted_goal_->goal.pose.position.x;
+        get_plan_srv.request.goal.pose.position.y = predicted_goal_->goal.pose.position.y;
+        get_plan_srv.request.goal.pose.position.z = predicted_goal_->goal.pose.position.z;
+        get_plan_srv.request.goal.pose.orientation = predicted_goal_->goal.pose.orientation;
 
         ROS_DEBUG_NAMED(NODE_NAME, "human start: x=%.2f, y=%.2f, theta=%.2f, "
                                    "goal: x=%.2f, y=%.2f, theta=%.2f",
@@ -830,7 +839,6 @@ bool HumanPosePrediction::predictHumansGoal(
               human_path_vel.path = get_plan_srv.response.plan;
               human_path_vel.start_vel = human_start_pose_vel.vel;
               behind_path_vels_.push_back(human_path_vel);
-              std::cout << "behind_path_vels_.size() " << behind_path_vels_.size() << '\n';
               got_new_human_paths_ = true;
             } else {
               ROS_WARN_NAMED(NODE_NAME, "Got empty path for human, start or "
@@ -923,7 +931,7 @@ bool HumanPosePrediction::predictHumansFromPaths(
 
   for (auto &poses : last_predicted_poses_) {
     if (!poses.poses.empty()) {
-      std::cout << "I enetred poses.poses" << '\n';
+      //std::cout << "I enetred poses.poses" << '\n';
       geometry_msgs::PoseStamped start_pose;
       geometry_msgs::TwistStamped start_twist;
       if (transformPoseTwist(tracked_humans, poses.id,
@@ -952,7 +960,7 @@ bool HumanPosePrediction::predictHumansFromPaths(
                            poses.poses.end());
 
         if (!pruned_path.empty()) {
-          std::cout << "I enetred pruned_path" << '\n';
+          //std::cout << "I enetred pruned_path" << '\n';
 
 
           // update time stamps for the predicted path
@@ -978,7 +986,7 @@ bool HumanPosePrediction::predictHumansFromPaths(
           predicted_poses.poses = pruned_path;
 
           res.predicted_humans_poses.push_back(predicted_poses);
-          ROS_INFO("Pushed the poses");
+          //ROS_INFO("Pushed the poses");
           ROS_DEBUG_NAMED(
               NODE_NAME,
               "Giving path of %ld points from %ld points for human %ld",

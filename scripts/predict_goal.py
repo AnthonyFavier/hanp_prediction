@@ -5,6 +5,8 @@ import rospy
 from scipy.stats import multivariate_normal
 from geometry_msgs.msg import Point, PoseStamped
 from hanp_msgs.msg import TrackedHumans, TrackedHuman, TrackedSegmentType
+from hanp_prediction.msg import PredictedGoal
+from std_srvs.srv import SetBool, Trigger, TriggerResponse
 import tf
 EPS = 1e-12
 
@@ -15,6 +17,8 @@ class PredictGoal():
         self.goals_y = [2.0, 8.0, 12.5, 15.0, 15.0, 1.5, -4.5]
 
         self.predicted_goal = PoseStamped()
+        self.last_idx = 0
+        self.changed = False
         self.current_poses = [[] for i in range(self.human_num)]
         self.prev_poses = [[] for i in range(self.human_num)]
         self.mv_nd = multivariate_normal(mean=0,cov=0.1)
@@ -28,7 +32,8 @@ class PredictGoal():
         NODE_NAME = "human_goal_predict"
         rospy.init_node(NODE_NAME)
         self.humans_sub_ = rospy.Subscriber("/tracked_humans",TrackedHumans,self.tracked_humansCB)
-        self.goal_pub_ = rospy.Publisher(NODE_NAME+"/predicted_goal",PoseStamped, queue_size=10)
+        self.goal_pub_ = rospy.Publisher(NODE_NAME+"/predicted_goal",PredictedGoal, queue_size=1)
+        self.goal_srv_ = rospy.Service("goal_changed", Trigger, self.goal_changed)
         rospy.spin()
 
     def tracked_humansCB(self,msg):
@@ -83,6 +88,8 @@ class PredictGoal():
     def predict_linear(self):
         idx = 0
         max_prob = 0.0
+        p_goal = PredictedGoal()
+
         for i in range(0,len(self.current_poses)):
             for j in range(0,len(self.goals_x)):
                 if(max_prob<self.probability_goal[i][j]):
@@ -95,8 +102,20 @@ class PredictGoal():
             self.predicted_goal.pose.position.y = self.goals_y[idx]
             self.predicted_goal.pose.position.z = 0.0
             self.predicted_goal.pose.orientation = self.current_poses[i][0].orientation
-
-        self.goal_pub_.publish(self.predicted_goal)
+        
+            if self.last_idx != idx:
+                p_goal.changed = True
+                self.changed = True
+        
+        self.last_idx = idx
+        p_goal.goal = self.predicted_goal
+        self.goal_pub_.publish(p_goal)
+    
+    def goal_changed(self,req):
+        if self.changed:
+            self.changed = False
+            return TriggerResponse(True,"Goal Changed")
+        return TriggerResponse(False, "Goal not changed")
 
 
 test = PredictGoal(1)

@@ -41,6 +41,7 @@
 #include <hanp_msgs/HumanTrajectory.h>
 #include <hanp_msgs/HumanTrajectoryArray.h>
 #include <hanp_prediction/HumanPosePredict.h>
+#include <hanp_prediction/PredictedGoal.h>
 #include <tf/transform_listener.h>
 #include <std_srvs/SetBool.h>
 #include <std_srvs/Empty.h>
@@ -70,7 +71,7 @@ private:
   // ros services
   ros::ServiceServer predict_humans_server_, reset_ext_paths_server_,
       publish_markers_srv_;
-  ros::ServiceClient get_plan_client_;
+  ros::ServiceClient get_plan_client_,goal_change_srv_;
 
   // dynamic reconfigure variables
   dynamic_reconfigure::Server<HumanPosePredictionConfig> *dsrv_;
@@ -112,7 +113,7 @@ private:
 
   hanp_msgs::TrackedHumans tracked_humans_;
   hanp_msgs::HumanPathArray::ConstPtr external_paths_;
-  geometry_msgs::PoseStamped::ConstPtr predicted_goal_;
+  hanp_prediction::PredictedGoal::ConstPtr predicted_goal_;
   hanp_msgs::HumanPathArray external_paths2_;
   hanp_msgs::HumanTrajectoryArrayConstPtr external_trajs_;
 
@@ -163,7 +164,7 @@ private:
                           geometry_msgs::TwistStamped &twist);
   void externalTrajsCB(const hanp_msgs::HumanTrajectoryArrayConstPtr &traj_array);
 
-  void predictedGoalCB(const geometry_msgs::PoseStamped::ConstPtr& predicted_goal);
+  void predictedGoalCB(const hanp_prediction::PredictedGoal::ConstPtr& predicted_goal);
 
 
 

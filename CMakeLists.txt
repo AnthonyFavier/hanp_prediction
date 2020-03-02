@@ -24,6 +24,7 @@ find_package(catkin REQUIRED COMPONENTS
 add_message_files( DIRECTORY msg
   FILES
     PredictedPoses.msg
+    PredictedGoal.msg
 )
 
 add_service_files( DIRECTORY srv
