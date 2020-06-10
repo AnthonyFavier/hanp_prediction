@@ -13,8 +13,14 @@ EPS = 1e-12
 class PredictGoal():
     def __init__(self, human_num=1):
         self.human_num = human_num
+        # Map_LAAS
         self.goals_x = [1.5, 7.0, 9.0, 10.5, 1.5, 10.3, 8.5]
         self.goals_y = [2.0, 8.0, 12.5, 15.0, 15.0, 1.5, -4.5]
+        self.goal_num = 7
+
+        #Map_new
+        # self.goals_x = [1.5,1.5,1.5,1.5,1.5,7.5,25,42,42,41.5,42,37,22,15.5,28.5,37,23.5,10.5,15.5,31.5,20,25.5,7]
+        # self.goals_y = [45,15,30,60,87,87,81.5,81.5,66,41.5,22,3,3,12.5,12.5,20.5,21.5,28.5,39.5,47,53,59,59]
 
         self.predicted_goal = PoseStamped()
         self.last_idx = 0
@@ -22,10 +28,10 @@ class PredictGoal():
         self.current_poses = [[] for i in range(self.human_num)]
         self.prev_poses = [[] for i in range(self.human_num)]
         self.mv_nd = multivariate_normal(mean=0,cov=0.1)
-        self.theta_phi = [[0]*7 for i in range(self.human_num)]
+        self.theta_phi = [[0]*self.goal_num for i in range(self.human_num)]
         self.window_size = 10
-        self.probability_goal = [np.array([1.0/7]*7) for i in range(self.human_num)]
-        self.probability_goal_window = [np.array([[1.0/7]*7]*self.window_size) for i in range(self.human_num)]
+        self.probability_goal = [np.array([1.0/self.goal_num]*self.goal_num) for i in range(self.human_num)]
+        self.probability_goal_window = [np.array([[1.0/self.goal_num]*self.goal_num]*self.window_size) for i in range(self.human_num)]
         self.done = False
         self.itr = 0
 
@@ -64,9 +70,10 @@ class PredictGoal():
 
                 self.probability_goal_window[i][self.itr] = self.mv_nd.pdf(np.array(self.theta_phi[i]));
 
-                self.probability_goal[i] = np.array([1.0]*7)
-                for k in range(0,len(self.probability_goal_window[i][self.itr])):
-                    self.probability_goal[i] =  self.probability_goal_window[i][k]* np.array(self.probability_goal[i]) # Linear prediction of goal
+                self.probability_goal[i] = np.array([1.0]*self.goal_num)
+                for k in range(0,len(self.probability_goal_window[i])):
+                    gf = np.exp((k-self.window_size)/5)
+                    self.probability_goal[i] =  np.power(self.probability_goal_window[i][k],gf)* np.array(self.probability_goal[i]) # Linear prediction of goal
                 # print(self.probability_goal[i])
 
                 for ln in range(0,len(self.goals_x)):
@@ -82,10 +89,10 @@ class PredictGoal():
 
                 self.done = True
 
-        self.predict_linear()
+        self.predict_goal()
 
 
-    def predict_linear(self):
+    def predict_goal(self):
         idx = 0
         max_prob = 0.0
         p_goal = PredictedGoal()
@@ -110,6 +117,7 @@ class PredictGoal():
         self.last_idx = idx
         p_goal.goal = self.predicted_goal
         self.goal_pub_.publish(p_goal)
+
 
     def goal_changed(self,req):
         if self.changed:

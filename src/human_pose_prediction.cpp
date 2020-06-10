@@ -104,7 +104,7 @@ void HumanPosePrediction::initialize() {
       private_nh.subscribe(external_paths_sub_topic_, 1,
                            &HumanPosePrediction::externalPathsCB, this);
   external_trajs_sub_ = private_nh.subscribe("external_human_trajs", 1, &HumanPosePrediction::externalTrajsCB, this);
-  
+
   predicted_goal_sub_ = private_nh.subscribe("/human_goal_predict/predicted_goal", 1, &HumanPosePrediction::predictedGoalCB, this);
 
   predicted_humans_pub_ = private_nh.advertise<visualization_msgs::MarkerArray>(
@@ -699,7 +699,7 @@ bool HumanPosePrediction::predictHumansBehind(
                         get_plan_srv.request.goal.pose.position.x,
                         get_plan_srv.request.goal.pose.position.y,
                         tf::getYaw(get_plan_srv.request.goal.pose.orientation));
-        std::cout << "I am here 3 " << '\n';
+        // std::cout << "I am here 3 " << '\n';
 
         // make plan for human
         if (get_plan_client_) {
@@ -710,7 +710,7 @@ bool HumanPosePrediction::predictHumansBehind(
               human_path_vel.path = get_plan_srv.response.plan;
               human_path_vel.start_vel = human_start_pose_vel.vel;
               behind_path_vels_.push_back(human_path_vel);
-              std::cout << "behind_path_vels_.size() " << behind_path_vels_.size() << '\n';
+              // std::cout << "behind_path_vels_.size() " << behind_path_vels_.size() << '\n';
               got_new_human_paths_ = true;
             } else {
               ROS_WARN_NAMED(NODE_NAME, "Got empty path for human, start or "
@@ -755,7 +755,7 @@ bool HumanPosePrediction::predictHumansGoal(
     }
     std_srvs::Trigger g_srv;
     goal_change_srv_.call(g_srv);
-	    
+
     if (!path_exist || g_srv.response.success) {
       // get human pose
       for (auto &segment : human.segments) {
