@@ -118,19 +118,19 @@ void HumanPosePrediction::initialize() {
   dsrv_->setCallback(cb);
 
   // initialize services
-  predict_humans_server_ = private_nh.advertiseService(
-      predict_service_name_, &HumanPosePrediction::predictHumans, this);
-  reset_ext_paths_server_ = private_nh.advertiseService(
-      reset_ext_paths_service_name_, &HumanPosePrediction::resetExtPaths, this);
-  publish_markers_srv_ = private_nh.advertiseService(
-      publish_markers_srv_name_, &HumanPosePrediction::setPublishMarkers, this);
-  get_plan_client_ =
-      private_nh.serviceClient<nav_msgs::GetPlan>(get_plan_srv_name_, true);
+  predict_humans_server_ = private_nh.advertiseService(predict_service_name_, &HumanPosePrediction::predictHumans, this);
+  reset_ext_paths_server_ = private_nh.advertiseService(reset_ext_paths_service_name_, &HumanPosePrediction::resetExtPaths, this);
+  publish_markers_srv_ = private_nh.advertiseService(publish_markers_srv_name_, &HumanPosePrediction::setPublishMarkers, this);
+  set_goal_srv_ = private_nh.advertiseService("set_human_goal", &HumanPosePrediction::setExternalGoal, this);
+  set_goal_call_srv_ = private_nh.advertiseService("set_human_goal_call", &HumanPosePrediction::setExternalGoal_call, this);
+  get_plan_client_ = private_nh.serviceClient<nav_msgs::GetPlan>(get_plan_srv_name_, true);
   goal_change_srv_  = private_nh.serviceClient<std_srvs::Trigger>("/goal_changed");
+
   showing_markers_ = false;
   got_new_human_paths_ = false;
-  got_new_goal = false;
+  // got_new_goal = false;
   done_cfg =  false;
+  got_external_goal = false;
 
   ROS_DEBUG_NAMED(NODE_NAME, "node %s initialized", NODE_NAME);
 }
@@ -184,7 +184,7 @@ void HumanPosePrediction::externalPathsCB(
 void HumanPosePrediction::predictedGoalCB(const hanp_prediction::PredictedGoal::ConstPtr &predicted_goal){
   ROS_INFO_ONCE_NAMED(NODE_NAME, "hanp_prediction: received predicted goal");
   predicted_goal_ = predicted_goal;
-  got_new_goal = true;
+  // got_new_goal = true;
 }
 
 
@@ -569,7 +569,128 @@ bool HumanPosePrediction::predictHumansExternal(
     }
     // std::cout << "Called the plans function" << '\n';
     return predictHumansFromPaths(req, res, human_path_vel_array);
-  } else {
+  }
+  else if(got_external_goal){
+    auto now = ros::Time::now();
+    auto tracked_humans = tracked_humans_;
+    int h_id = 0;
+    geometry_msgs::PoseStamped ext_goal;
+
+    // first check if path calculation is needed, and for whom
+    std::vector<HumanStartPoseVel> human_start_pose_vels;
+    for (auto &human : tracked_humans.humans) {
+      bool path_exist = false;
+      for(auto &ex_gl : external_goals_){
+      	if(ex_gl.id == human.track_id){
+	  ext_goal = ex_gl.pose;
+	  break;
+	}
+      }
+      for (auto path_vel : behind_path_vels_) {
+        if (path_vel.id == human.track_id) {
+          path_exist = true;
+          break;
+        }
+      }
+      if (!path_exist) {
+        // get human pose
+        for (auto &segment : human.segments) {
+          if (segment.type == default_human_part_) {
+            geometry_msgs::PoseStamped human_start;
+            human_start.header.frame_id = tracked_humans.header.frame_id;
+            human_start.header.stamp = now;
+            human_start.pose = segment.pose.pose;
+
+            HumanStartPoseVel human_start_pose_vel = {
+                .id = human.track_id, .pose = human_start, .vel = segment.twist};
+            human_start_pose_vels.push_back(human_start_pose_vel);
+            break;
+          }
+        }
+      }
+    }
+
+    if (!human_start_pose_vels.empty()) {
+      // get robot pose
+      tf::StampedTransform robot_to_map_tf, human_to_map_tf;
+      bool transforms_found = false;
+      try {
+        tf_.lookupTransform(map_frame_id_, robot_frame_id_, ros::Time::now(),
+                            robot_to_map_tf);
+        tf_.lookupTransform(map_frame_id_, tracked_humans.header.frame_id,
+                            ros::Time::now(), human_to_map_tf);
+        transforms_found = true;
+      } catch (tf::LookupException &ex) {
+        ROS_ERROR_NAMED(NODE_NAME, "No Transform available Error: %s\n",
+                        ex.what());
+      } catch (tf::ConnectivityException &ex) {
+        ROS_ERROR_NAMED(NODE_NAME, "Connectivity Error: %s\n", ex.what());
+      } catch (tf::ExtrapolationException &ex) {
+        ROS_ERROR_NAMED(NODE_NAME, "Extrapolation Error: %s\n", ex.what());
+      }
+
+      if (transforms_found) {
+        for (auto &human_start_pose_vel : human_start_pose_vels) {
+          nav_msgs::GetPlan get_plan_srv;
+
+          // get human pose in map frame
+          tf::Pose start_pose_tf;
+          tf::poseMsgToTF(human_start_pose_vel.pose.pose, start_pose_tf);
+          start_pose_tf = human_to_map_tf * start_pose_tf;
+          get_plan_srv.request.start.header.frame_id = map_frame_id_;
+          get_plan_srv.request.start.header.stamp = now;
+          tf::poseTFToMsg(start_pose_tf, get_plan_srv.request.start.pose);
+
+          get_plan_srv.request.goal.header.frame_id = map_frame_id_;
+          get_plan_srv.request.goal.header.stamp = now;
+          get_plan_srv.request.goal.pose.position.x = ext_goal.pose.position.x;
+          get_plan_srv.request.goal.pose.position.y = ext_goal.pose.position.y;
+          get_plan_srv.request.goal.pose.position.z = ext_goal.pose.position.z;
+          get_plan_srv.request.goal.pose.orientation = ext_goal.pose.orientation;
+
+          ROS_DEBUG_NAMED(NODE_NAME, "human start: x=%.2f, y=%.2f, theta=%.2f, "
+                                     "goal: x=%.2f, y=%.2f, theta=%.2f",
+                          get_plan_srv.request.start.pose.position.x,
+                          get_plan_srv.request.start.pose.position.y,
+                          tf::getYaw(get_plan_srv.request.start.pose.orientation),
+                          get_plan_srv.request.goal.pose.position.x,
+                          get_plan_srv.request.goal.pose.position.y,
+                          tf::getYaw(get_plan_srv.request.goal.pose.orientation));
+          // std::cout << "I am here 3 " << '\n';
+
+          // make plan for human
+          if (get_plan_client_) {
+            if (get_plan_client_.call(get_plan_srv)) {
+              if (get_plan_srv.response.plan.poses.size() > 0) {
+                HumanPathVel human_path_vel;
+                human_path_vel.id = human_start_pose_vel.id;
+                human_path_vel.path = get_plan_srv.response.plan;
+                human_path_vel.start_vel = human_start_pose_vel.vel;
+                behind_path_vels_.push_back(human_path_vel);
+                got_new_human_paths_ = true;
+              } else {
+                ROS_WARN_NAMED(NODE_NAME, "Got empty path for human, start or "
+                                          "goal position is probably invalid");
+              }
+            } else {
+              ROS_WARN_NAMED(NODE_NAME, "Failed to call %s service",
+                             get_plan_srv_name_.c_str());
+            }
+          } else {
+            ROS_WARN_NAMED(NODE_NAME,
+                           "%s service does not exist, re-trying to subscribe",
+                           get_plan_srv_name_.c_str());
+            ros::NodeHandle private_nh("~/");
+            get_plan_client_ = private_nh.serviceClient<nav_msgs::GetPlan>(
+                get_plan_srv_name_, true);
+          }
+        }
+      }
+    }
+    return predictHumansFromPaths(req, res, behind_path_vels_);
+  }
+
+  else {
     std::vector<HumanPathVel> empty_path_vels;
     return predictHumansFromPaths(req, res, empty_path_vels);
   }
@@ -805,15 +926,6 @@ bool HumanPosePrediction::predictHumansGoal(
         get_plan_srv.request.start.header.stamp = now;
         tf::poseTFToMsg(start_pose_tf, get_plan_srv.request.start.pose);
 
-        // calculate human pose behind robot
-        tf::Transform behind_tr;
-        behind_tr.setOrigin(tf::Vector3(-human_dist_behind_robot_, 0.0, 0.0));
-        behind_tr.setRotation(
-            tf::createQuaternionFromYaw(human_angle_behind_robot_));
-        behind_tr = robot_to_map_tf * behind_tr;
-        geometry_msgs::Transform behind_pose;
-        tf::transformTFToMsg(behind_tr, behind_pose);
-
         get_plan_srv.request.goal.header.frame_id = map_frame_id_;
         get_plan_srv.request.goal.header.stamp = now;
         get_plan_srv.request.goal.pose.position.x = predicted_goal_->goal.pose.position.x;
@@ -928,6 +1040,7 @@ bool HumanPosePrediction::predictHumansFromPaths(
     }
   }
   got_new_human_paths_ = false;
+  // got_external_goal = false;
 
   for (auto &poses : last_predicted_poses_) {
     if (!poses.poses.empty()) {
@@ -1009,6 +1122,25 @@ bool HumanPosePrediction::setPublishMarkers(std_srvs::SetBool::Request &req,
   return true;
 }
 
+bool HumanPosePrediction::setExternalGoal(hanp_prediction::HumanGoal::Request &req, hanp_prediction::HumanGoal::Response &res){
+  ROS_DEBUG_NAMED(NODE_NAME, "Received new human goal");
+  got_external_goal = true;
+  external_goals_.clear();
+  behind_path_vels_.clear();
+  for(auto & goal: req.goals){
+    external_goals_.push_back(goal);
+  }
+
+  res.success=true;
+  res.message="Goal has been set.";
+}
+
+bool HumanPosePrediction::setExternalGoal_call(std_srvs::Trigger::Request &req, std_srvs::Trigger::Response &res){
+	res.message = got_external_goal ? "Goal Set":"Goal not Set";
+	res.success = got_external_goal;
+	return true;
+}
+
 bool HumanPosePrediction::transformPoseTwist(
     const hanp_msgs::TrackedHumans &tracked_humans, const uint64_t &human_id,
     const std::string &to_frame, geometry_msgs::PoseStamped &pose,
@@ -1083,6 +1215,7 @@ size_t HumanPosePrediction::prunePath(
 bool HumanPosePrediction::resetExtPaths(std_srvs::Empty::Request &req,
                                         std_srvs::Empty::Response &res) {
   got_new_human_paths_ = false;
+  got_external_goal = false;
   last_predicted_poses_.clear();
   behind_path_vels_.clear();
   return true;

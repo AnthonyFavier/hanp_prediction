@@ -25,11 +25,13 @@ add_message_files( DIRECTORY msg
   FILES
     PredictedPoses.msg
     PredictedGoal.msg
+    HumanPose.msg
 )
 
 add_service_files( DIRECTORY srv
   FILES
     HumanPosePredict.srv
+    HumanGoal.srv
 )
 
 # add_action_files( DIRECTORY action

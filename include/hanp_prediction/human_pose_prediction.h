@@ -42,8 +42,11 @@
 #include <hanp_msgs/HumanTrajectoryArray.h>
 #include <hanp_prediction/HumanPosePredict.h>
 #include <hanp_prediction/PredictedGoal.h>
+#include <hanp_prediction/HumanGoal.h>
+#include <hanp_prediction/HumanPose.h>
 #include <tf/transform_listener.h>
 #include <std_srvs/SetBool.h>
+#include <std_srvs/Trigger.h>
 #include <std_srvs/Empty.h>
 #include <nav_msgs/GetPlan.h>
 
@@ -70,7 +73,7 @@ private:
 
   // ros services
   ros::ServiceServer predict_humans_server_, reset_ext_paths_server_,
-      publish_markers_srv_;
+      publish_markers_srv_, set_goal_srv_, set_goal_call_srv_;
   ros::ServiceClient get_plan_client_,goal_change_srv_;
 
   // dynamic reconfigure variables
@@ -89,7 +92,7 @@ private:
       predicted_humans_markers_pub_topic_, publish_markers_srv_name_,
       get_plan_srv_name_;
   int default_human_part_;
-  bool publish_markers_, showing_markers_, got_new_human_paths_, got_new_goal;
+  bool publish_markers_, showing_markers_, got_new_human_paths_, got_new_goal, got_external_goal;
   std::string robot_frame_id_, map_frame_id_;
   double human_dist_behind_robot_, human_angle_behind_robot_;
 
@@ -116,6 +119,7 @@ private:
   hanp_prediction::PredictedGoal::ConstPtr predicted_goal_;
   hanp_msgs::HumanPathArray external_paths2_;
   hanp_msgs::HumanTrajectoryArrayConstPtr external_trajs_;
+  std::vector<hanp_prediction::HumanPose> external_goals_;
 
   std::vector<HumanPathVel> behind_path_vels_;
   std::vector<hanp_prediction::PredictedPoses> last_predicted_poses_;
@@ -157,6 +161,8 @@ private:
                               const std::vector<HumanPathVel> &path_vels);
   bool setPublishMarkers(std_srvs::SetBool::Request &req,
                          std_srvs::SetBool::Response &res);
+  bool setExternalGoal(hanp_prediction::HumanGoal::Request &req, hanp_prediction::HumanGoal::Response &res);
+  bool setExternalGoal_call(std_srvs::Trigger::Request &req, std_srvs::Trigger::Response &res);
 
   bool transformPoseTwist(const hanp_msgs::TrackedHumans &tracked_humans,
                           const uint64_t &human_id, const std::string &to_frame,

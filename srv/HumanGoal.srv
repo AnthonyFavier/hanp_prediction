@@ -1,0 +1,4 @@
+hanp_prediction/HumanPose[]  goals
+---
+bool                         success
+string                       message
