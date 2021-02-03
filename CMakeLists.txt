@@ -90,6 +90,9 @@ add_dependencies(human_pose_prediction ${${PROJECT_NAME}_EXPORTED_TARGETS} ${cat
 # libraries to link the target c++ executable against
 target_link_libraries(human_pose_prediction ${catkin_LIBRARIES})
 
+add_executable(tracked_human src/tracked_human.cpp)
+add_dependencies(tracked_human ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+target_link_libraries(tracked_human ${catkin_LIBRARIES})
 
 
 ## install ##
