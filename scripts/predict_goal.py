@@ -10,9 +10,10 @@ from std_srvs.srv import SetBool, Trigger, TriggerResponse
 import tf
 EPS = 1e-12
 
-class PredictGoal():
+class PredictGoal(object):
     def __init__(self, human_num=1):
         self.human_num = human_num
+
         # Map_LAAS
         self.goals_x = [1.5, 7.0, 9.0, 10.5, 1.5, 10.3, 8.5]
         self.goals_y = [2.0, 8.0, 12.5, 15.0, 15.0, 1.5, -4.5]
@@ -38,7 +39,7 @@ class PredictGoal():
         NODE_NAME = "human_goal_predict"
         rospy.init_node(NODE_NAME)
         self.humans_sub_ = rospy.Subscriber("/tracked_humans",TrackedHumans,self.tracked_humansCB)
-        self.goal_pub_ = rospy.Publisher(NODE_NAME+"/predicted_goal",PredictedGoal, queue_size=1)
+        self.goal_pub_ = rospy.Publisher(NODE_NAME+"/predicted_goal",PredictedGoal, queue_size=2)
         self.goal_srv_ = rospy.Service("goal_changed", Trigger, self.goal_changed)
         rospy.spin()
 
@@ -49,24 +50,26 @@ class PredictGoal():
         for human in msg.humans:
             for segment in human.segments:
                 if segment.type == TrackedSegmentType.TORSO:
+                    # print((self.human_num))
                     self.current_poses[human.track_id-1].append(segment.pose.pose)
         if not self.done:
             self.prev_poses = self.current_poses
 
-        for i in range(0,len(self.current_poses)):
-            diff = np.linalg.norm([self.current_poses[i][0].position.x - self.prev_poses[i][0].position.x, self.current_poses[i][0].position.y - self.prev_poses[i][0].position.y])
+        for i in range(0,len(self.current_poses[0])):
+            # print(self.current_poses[0][i])
+            diff = np.linalg.norm([self.current_poses[0][i].position.x - self.prev_poses[0][i].position.x, self.current_poses[0][i].position.y - self.prev_poses[0][i].position.y])
 
             if diff > EPS or not self.done:
                 dist = []
                 for j in range(0,len(self.goals_x)):
                     # print(self.current_poses[i])
-                    vec1 = np.array([self.goals_x[j],self.goals_y[j],0.0]) - np.array([self.current_poses[i][0].position.x,self.current_poses[i][0].position.y,0.0])  #Vector from current position to a goal
+                    vec1 = np.array([self.goals_x[j],self.goals_y[j],0.0]) - np.array([self.current_poses[0][i].position.x,self.current_poses[0][i].position.y,0.0])  #Vector from current position to a goal
                     # print(self.current_poses[i][0].orientation)
-                    rotation = (self.current_poses[i][0].orientation.x,self.current_poses[i][0].orientation.y,self.current_poses[i][0].orientation.z,self.current_poses[i][0].orientation.w)
+                    rotation = (self.current_poses[0][i].orientation.x,self.current_poses[0][i].orientation.y,self.current_poses[0][i].orientation.z,self.current_poses[0][i].orientation.w)
                     roll,pitch,yaw = tf.transformations.euler_from_quaternion(rotation)
                     unit_vec = np.array([np.cos(yaw), np.sin(yaw),0.0])
                     self.theta_phi[i][j] = (np.arccos(np.dot(vec1,unit_vec)/np.linalg.norm(vec1)))
-                    dist.append(np.linalg.norm([self.current_poses[i][0].position.x - self.goals_x[j],self.current_poses[i][0].position.y - self.goals_y[j]]))
+                    dist.append(np.linalg.norm([self.current_poses[0][i].position.x - self.goals_x[j],self.current_poses[0][i].position.y - self.goals_y[j]]))
 
                 self.probability_goal_window[i][self.itr] = self.mv_nd.pdf(np.array(self.theta_phi[i]));
 
@@ -97,7 +100,7 @@ class PredictGoal():
         max_prob = 0.0
         p_goal = PredictedGoal()
 
-        for i in range(0,len(self.current_poses)):
+        for i in range(0,len(self.current_poses[0])):
             for j in range(0,len(self.goals_x)):
                 if(max_prob<self.probability_goal[i][j]):
                     idx = j
@@ -108,7 +111,7 @@ class PredictGoal():
             self.predicted_goal.pose.position.x = self.goals_x[idx]
             self.predicted_goal.pose.position.y = self.goals_y[idx]
             self.predicted_goal.pose.position.z = 0.0
-            self.predicted_goal.pose.orientation = self.current_poses[i][0].orientation
+            self.predicted_goal.pose.orientation = self.current_poses[0][i].orientation
 
             if self.last_idx != idx:
                 p_goal.changed = True
@@ -126,7 +129,7 @@ class PredictGoal():
         return TriggerResponse(False, "Goal not changed")
 
 
-test = PredictGoal(1)
+predict_srv = PredictGoal(3)
 
 # void HumanPosePrediction::trackedHumansCB(
 #     const hanp_msgs::TrackedHumans &tracked_humans) {

@@ -174,6 +174,10 @@ void HumanPosePrediction::trackedHumansCB(
   tracked_humans_ = tracked_humans;
 }
 
+double HumanPosePrediction::checkdist(geometry_msgs::Pose human, geometry_msgs::Pose robot){
+  return std::hypot(human.position.x-robot.position.x,human.position.y-robot.position.y);
+}
+
 void HumanPosePrediction::externalPathsCB(
     const hanp_msgs::HumanPathArray::ConstPtr &external_paths) {
   ROS_INFO_ONCE_NAMED(NODE_NAME, "hanp_prediction: received human paths");
@@ -451,7 +455,9 @@ bool HumanPosePrediction::predictHumansVelObs(
 
   for (auto human : humans) {
     // TODO: filter by res.ids
-
+    if(std::find(req.ids.begin(),req.ids.end(),human.track_id)==req.ids.end()){
+      continue;
+    }
     for (auto segment : human.segments) {
       if (segment.type == default_human_part_) {
         // calculate future human poses based on current velocity
@@ -543,7 +549,6 @@ bool HumanPosePrediction::predictHumansExternal(
     hanp_prediction::HumanPosePredict::Request &req,
     hanp_prediction::HumanPosePredict::Response &res) {
   if (external_paths_) {
-    // std::cout << "Entered External Paths" << '\n';
     auto external_paths = external_paths_;
     auto tracked_humans = tracked_humans_;
 
@@ -558,7 +563,6 @@ bool HumanPosePrediction::predictHumansExternal(
           for (auto &segment : human.segments) {
             if (segment.type == default_human_part_) {
               human_path_vel.start_vel = segment.twist;
-              // std::cout << "I entered here" << '\n';
               break;
             }
           }
@@ -567,24 +571,46 @@ bool HumanPosePrediction::predictHumansExternal(
       }
       human_path_vel_array.push_back(human_path_vel);
     }
-    // std::cout << "Called the plans function" << '\n';
     return predictHumansFromPaths(req, res, human_path_vel_array);
   }
   else if(got_external_goal){
     auto now = ros::Time::now();
     auto tracked_humans = tracked_humans_;
-    int h_id = 0;
-    geometry_msgs::PoseStamped ext_goal;
+    std::map<uint64_t, geometry_msgs::PoseStamped> ext_goal;
+
+    // get robot pose
+    tf::StampedTransform robot_to_map_tf, human_to_map_tf;
+    bool transforms_found = false;
+    try {
+      tf_.lookupTransform(map_frame_id_, robot_frame_id_, ros::Time::now(),
+                          robot_to_map_tf);
+      tf_.lookupTransform(map_frame_id_, tracked_humans.header.frame_id,
+                          ros::Time::now(), human_to_map_tf);
+      transforms_found = true;
+    } catch (tf::LookupException &ex) {
+      ROS_ERROR_NAMED(NODE_NAME, "No Transform available Error: %s\n",
+                      ex.what());
+    } catch (tf::ConnectivityException &ex) {
+      ROS_ERROR_NAMED(NODE_NAME, "Connectivity Error: %s\n", ex.what());
+    } catch (tf::ExtrapolationException &ex) {
+      ROS_ERROR_NAMED(NODE_NAME, "Extrapolation Error: %s\n", ex.what());
+    }
 
     // first check if path calculation is needed, and for whom
     std::vector<HumanStartPoseVel> human_start_pose_vels;
+    std::vector<bool> start_poses_far;
+    int idx_order = 0;
     for (auto &human : tracked_humans.humans) {
+      behind_path_vels_pos.push_back(-1);
+      if(std::find(req.ids.begin(),req.ids.end(),human.track_id)==req.ids.end()){
+        continue;
+      }
       bool path_exist = false;
       for(auto &ex_gl : external_goals_){
       	if(ex_gl.id == human.track_id){
-	  ext_goal = ex_gl.pose;
-	  break;
-	}
+      	  ext_goal[ex_gl.id] = ex_gl.pose;
+      	  break;
+	       }
       }
       for (auto path_vel : behind_path_vels_) {
         if (path_vel.id == human.track_id) {
@@ -592,47 +618,54 @@ bool HumanPosePrediction::predictHumansExternal(
           break;
         }
       }
-      if (!path_exist) {
-        // get human pose
-        for (auto &segment : human.segments) {
-          if (segment.type == default_human_part_) {
-            geometry_msgs::PoseStamped human_start;
-            human_start.header.frame_id = tracked_humans.header.frame_id;
-            human_start.header.stamp = now;
-            human_start.pose = segment.pose.pose;
 
+      // get human pose
+      for (auto &segment : human.segments) {
+        if (segment.type == default_human_part_) {
+          geometry_msgs::PoseStamped human_start;
+          human_start.header.frame_id = tracked_humans.header.frame_id;
+          human_start.header.stamp = now;
+          human_start.pose = segment.pose.pose;
+
+          tf::Pose start_pose_tf;
+          geometry_msgs::Pose start_pose_;
+          tf::poseMsgToTF(human_start.pose, start_pose_tf);
+          start_pose_tf = human_to_map_tf * start_pose_tf;
+          tf::poseTFToMsg(start_pose_tf, start_pose_);
+
+          if(!path_exist){
             HumanStartPoseVel human_start_pose_vel = {
                 .id = human.track_id, .pose = human_start, .vel = segment.twist};
             human_start_pose_vels.push_back(human_start_pose_vel);
-            break;
+            behind_path_vels_pos[human.track_id-1] = idx_order;
           }
+          else{
+            if(behind_path_vels_.size()>=human.track_id && std::find(req.ids.begin(),req.ids.end(),human.track_id)!=req.ids.end()){
+              double dist_far = std::hypot(human_start.pose.position.x-behind_path_vels_[behind_path_vels_pos[human.track_id-1]].path.poses[0].pose.position.x,
+                                           human_start.pose.position.y-behind_path_vels_[behind_path_vels_pos[human.track_id-1]].path.poses[0].pose.position.y);
+            if(dist_far > 0.5){
+              start_poses_far.push_back(true);
+              HumanStartPoseVel human_start_pose_vel = {
+                  .id = human.track_id, .pose = human_start, .vel = segment.twist};
+              human_start_pose_vels.push_back(human_start_pose_vel);
+              behind_path_vels_pos[human.track_id-1] = idx_order;
+              behind_path_vels_.clear();
+            }
+           }
+          }
+          break;
         }
       }
+      idx_order++;
     }
 
     if (!human_start_pose_vels.empty()) {
-      // get robot pose
-      tf::StampedTransform robot_to_map_tf, human_to_map_tf;
-      bool transforms_found = false;
-      try {
-        tf_.lookupTransform(map_frame_id_, robot_frame_id_, ros::Time::now(),
-                            robot_to_map_tf);
-        tf_.lookupTransform(map_frame_id_, tracked_humans.header.frame_id,
-                            ros::Time::now(), human_to_map_tf);
-        transforms_found = true;
-      } catch (tf::LookupException &ex) {
-        ROS_ERROR_NAMED(NODE_NAME, "No Transform available Error: %s\n",
-                        ex.what());
-      } catch (tf::ConnectivityException &ex) {
-        ROS_ERROR_NAMED(NODE_NAME, "Connectivity Error: %s\n", ex.what());
-      } catch (tf::ExtrapolationException &ex) {
-        ROS_ERROR_NAMED(NODE_NAME, "Extrapolation Error: %s\n", ex.what());
-      }
 
       if (transforms_found) {
         for (auto &human_start_pose_vel : human_start_pose_vels) {
           nav_msgs::GetPlan get_plan_srv;
-
+          if(ext_goal.find(human_start_pose_vel.id) == ext_goal.end())
+            continue;
           // get human pose in map frame
           tf::Pose start_pose_tf;
           tf::poseMsgToTF(human_start_pose_vel.pose.pose, start_pose_tf);
@@ -643,10 +676,10 @@ bool HumanPosePrediction::predictHumansExternal(
 
           get_plan_srv.request.goal.header.frame_id = map_frame_id_;
           get_plan_srv.request.goal.header.stamp = now;
-          get_plan_srv.request.goal.pose.position.x = ext_goal.pose.position.x;
-          get_plan_srv.request.goal.pose.position.y = ext_goal.pose.position.y;
-          get_plan_srv.request.goal.pose.position.z = ext_goal.pose.position.z;
-          get_plan_srv.request.goal.pose.orientation = ext_goal.pose.orientation;
+          get_plan_srv.request.goal.pose.position.x = ext_goal[human_start_pose_vel.id].pose.position.x;
+          get_plan_srv.request.goal.pose.position.y = ext_goal[human_start_pose_vel.id].pose.position.y;
+          get_plan_srv.request.goal.pose.position.z = ext_goal[human_start_pose_vel.id].pose.position.z;
+          get_plan_srv.request.goal.pose.orientation = ext_goal[human_start_pose_vel.id].pose.orientation;
 
           ROS_DEBUG_NAMED(NODE_NAME, "human start: x=%.2f, y=%.2f, theta=%.2f, "
                                      "goal: x=%.2f, y=%.2f, theta=%.2f",
@@ -656,7 +689,6 @@ bool HumanPosePrediction::predictHumansExternal(
                           get_plan_srv.request.goal.pose.position.x,
                           get_plan_srv.request.goal.pose.position.y,
                           tf::getYaw(get_plan_srv.request.goal.pose.orientation));
-          // std::cout << "I am here 3 " << '\n';
 
           // make plan for human
           if (get_plan_client_) {
@@ -697,49 +729,42 @@ bool HumanPosePrediction::predictHumansExternal(
 }
 
 
-// bool HumanPosePrediction::predictHumansExternalTrajs(
-//     hanp_prediction::HumanPosePredict::Request &req,
-//     hanp_prediction::HumanPosePredict::Response &res) {
-//   if (external_trajs_) {
-//     auto external_trajs = external_trajs_;
-//     auto tracked_humans = tracked_humans_;
-//
-//     std::vector<HumanTrajVel> human_traj_vel_array;
-//     for (auto &traj : external_trajs->trajectories) {
-//       HumanTrajVel human_traj_vel{.id = traj.id, .traj = traj.points[traj.id]};
-//
-//       // set starting velocity of the human if we find them
-//       // we do not add current pose at first pose in this case
-//       for (auto &human : tracked_humans.humans) {
-//         if (human.track_id == traj.id) {
-//           for (auto &segment : human.segments) {
-//             if (segment.type == default_human_part_) {
-//               human_traj_vel.start_vel = segment.twist;
-//               break;
-//             }
-//           }
-//           break;
-//         }
-//       }
-//       human_traj_vel_array.push_back(human_traj_vel);
-//     }
-//
-//     return predictHumansFromTrajs(req, res, human_path_vel_array);
-//   } else {
-//     std::vector<HumanTrajVel> empty_path_vels;
-//     return predictHumansFromTrajs(req, res, empty_path_vels);
-//   }
-// }
-
 bool HumanPosePrediction::predictHumansBehind(
     hanp_prediction::HumanPosePredict::Request &req,
     hanp_prediction::HumanPosePredict::Response &res) {
   auto now = ros::Time::now();
   auto tracked_humans = tracked_humans_;
 
+  // get robot pose
+  tf::StampedTransform robot_to_map_tf, human_to_map_tf;
+  bool transforms_found = false;
+  try {
+    tf_.lookupTransform(map_frame_id_, robot_frame_id_, ros::Time::now(),
+                        robot_to_map_tf);
+    tf_.lookupTransform(map_frame_id_, tracked_humans.header.frame_id,
+                        ros::Time::now(), human_to_map_tf);
+    transforms_found = true;
+  } catch (tf::LookupException &ex) {
+    ROS_ERROR_NAMED(NODE_NAME, "No Transform available Error: %s\n",
+                    ex.what());
+  } catch (tf::ConnectivityException &ex) {
+    ROS_ERROR_NAMED(NODE_NAME, "Connectivity Error: %s\n", ex.what());
+  } catch (tf::ExtrapolationException &ex) {
+    ROS_ERROR_NAMED(NODE_NAME, "Extrapolation Error: %s\n", ex.what());
+  }
+  catch(...){
+    std::cout << "Something else" << '\n';
+  }
+
   // first check if path calculation is needed, and for whom
   std::vector<HumanStartPoseVel> human_start_pose_vels;
+  std::vector<bool> start_poses_far;
+  int idx_order = 0;
   for (auto &human : tracked_humans.humans) {
+    behind_path_vels_pos.push_back(-1);
+    if(std::find(req.ids.begin(),req.ids.end(),human.track_id)==req.ids.end()){
+      continue;
+    }
     bool path_exist = false;
     for (auto path_vel : behind_path_vels_) {
       if (path_vel.id == human.track_id) {
@@ -747,7 +772,7 @@ bool HumanPosePrediction::predictHumansBehind(
         break;
       }
     }
-    if (!path_exist) {
+
       // get human pose
       for (auto &segment : human.segments) {
         if (segment.type == default_human_part_) {
@@ -756,38 +781,44 @@ bool HumanPosePrediction::predictHumansBehind(
           human_start.header.stamp = now;
           human_start.pose = segment.pose.pose;
 
+          tf::Pose start_pose_tf;
+          geometry_msgs::Pose start_pose_;
+          tf::poseMsgToTF(human_start.pose, start_pose_tf);
+          start_pose_tf = human_to_map_tf * start_pose_tf;
+          tf::poseTFToMsg(start_pose_tf, start_pose_);
+
+          if(!path_exist){
           HumanStartPoseVel human_start_pose_vel = {
               .id = human.track_id, .pose = human_start, .vel = segment.twist};
           human_start_pose_vels.push_back(human_start_pose_vel);
+          behind_path_vels_pos[human.track_id-1] = idx_order;
+          }
+          else{
+            if(behind_path_vels_.size()>=human.track_id && std::find(req.ids.begin(),req.ids.end(),human.track_id)!=req.ids.end()){
+            double dist_far = std::hypot(human_start.pose.position.x-behind_path_vels_[behind_path_vels_pos[human.track_id-1]].path.poses[0].pose.position.x,
+                                         human_start.pose.position.y-behind_path_vels_[behind_path_vels_pos[human.track_id-1]].path.poses[0].pose.position.y);
+
+            if(dist_far > 0.5){
+              start_poses_far.push_back(true);
+              HumanStartPoseVel human_start_pose_vel = {
+                  .id = human.track_id, .pose = human_start, .vel = segment.twist};
+              human_start_pose_vels.push_back(human_start_pose_vel);
+              behind_path_vels_pos[human.track_id-1] = idx_order;
+              behind_path_vels_.clear();
+            }
+          }
+          }
           break;
         }
       }
-    }
+      idx_order++;
   }
-
   if (!human_start_pose_vels.empty()) {
-    // get robot pose
-    tf::StampedTransform robot_to_map_tf, human_to_map_tf;
-    bool transforms_found = false;
-    try {
-      tf_.lookupTransform(map_frame_id_, robot_frame_id_, ros::Time::now(),
-                          robot_to_map_tf);
-      tf_.lookupTransform(map_frame_id_, tracked_humans.header.frame_id,
-                          ros::Time::now(), human_to_map_tf);
-      transforms_found = true;
-    } catch (tf::LookupException &ex) {
-      ROS_ERROR_NAMED(NODE_NAME, "No Transform available Error: %s\n",
-                      ex.what());
-    } catch (tf::ConnectivityException &ex) {
-      ROS_ERROR_NAMED(NODE_NAME, "Connectivity Error: %s\n", ex.what());
-    } catch (tf::ExtrapolationException &ex) {
-      ROS_ERROR_NAMED(NODE_NAME, "Extrapolation Error: %s\n", ex.what());
-    }
-
     if (transforms_found) {
       for (auto &human_start_pose_vel : human_start_pose_vels) {
         nav_msgs::GetPlan get_plan_srv;
 
+        auto hum_id = human_start_pose_vel.id;
         // get human pose in map frame
         tf::Pose start_pose_tf;
         tf::poseMsgToTF(human_start_pose_vel.pose.pose, start_pose_tf);
@@ -797,13 +828,15 @@ bool HumanPosePrediction::predictHumansBehind(
         tf::poseTFToMsg(start_pose_tf, get_plan_srv.request.start.pose);
 
         // calculate human pose behind robot
-        tf::Transform behind_tr;
-        behind_tr.setOrigin(tf::Vector3(-human_dist_behind_robot_, 0.0, 0.0));
-        behind_tr.setRotation(
-            tf::createQuaternionFromYaw(human_angle_behind_robot_));
-        behind_tr = robot_to_map_tf * behind_tr;
-        geometry_msgs::Transform behind_pose;
-        tf::transformTFToMsg(behind_tr, behind_pose);
+        if(!check_path){
+          check_path = true;
+          tf::Transform behind_tr;
+          behind_tr.setOrigin(tf::Vector3(-human_dist_behind_robot_, 0.0, 0.0));
+          behind_tr.setRotation(
+              tf::createQuaternionFromYaw(human_angle_behind_robot_));
+          behind_tr = robot_to_map_tf * behind_tr;
+          tf::transformTFToMsg(behind_tr, behind_pose);
+        }
 
         get_plan_srv.request.goal.header.frame_id = map_frame_id_;
         get_plan_srv.request.goal.header.stamp = now;
@@ -820,7 +853,6 @@ bool HumanPosePrediction::predictHumansBehind(
                         get_plan_srv.request.goal.pose.position.x,
                         get_plan_srv.request.goal.pose.position.y,
                         tf::getYaw(get_plan_srv.request.goal.pose.orientation));
-        // std::cout << "I am here 3 " << '\n';
 
         // make plan for human
         if (get_plan_client_) {
@@ -831,7 +863,6 @@ bool HumanPosePrediction::predictHumansBehind(
               human_path_vel.path = get_plan_srv.response.plan;
               human_path_vel.start_vel = human_start_pose_vel.vel;
               behind_path_vels_.push_back(human_path_vel);
-              // std::cout << "behind_path_vels_.size() " << behind_path_vels_.size() << '\n';
               got_new_human_paths_ = true;
             } else {
               ROS_WARN_NAMED(NODE_NAME, "Got empty path for human, start or "
@@ -863,10 +894,34 @@ bool HumanPosePrediction::predictHumansGoal(
   auto now = ros::Time::now();
   auto tracked_humans = tracked_humans_;
 
-  // first check if path calculation is needed, and for whom
+  // get robot pose
+  tf::StampedTransform robot_to_map_tf, human_to_map_tf;
+  bool transforms_found = false;
+  try {
+    tf_.lookupTransform(map_frame_id_, robot_frame_id_, ros::Time::now(),
+                        robot_to_map_tf);
+    tf_.lookupTransform(map_frame_id_, tracked_humans.header.frame_id,
+                        ros::Time::now(), human_to_map_tf);
+    transforms_found = true;
+  } catch (tf::LookupException &ex) {
+    ROS_ERROR_NAMED(NODE_NAME, "No Transform available Error: %s\n",
+                    ex.what());
+  } catch (tf::ConnectivityException &ex) {
+    ROS_ERROR_NAMED(NODE_NAME, "Connectivity Error: %s\n", ex.what());
+  } catch (tf::ExtrapolationException &ex) {
+    ROS_ERROR_NAMED(NODE_NAME, "Extrapolation Error: %s\n", ex.what());
+  }
 
+  // first check if path calculation is needed, and for whom
   std::vector<HumanStartPoseVel> human_start_pose_vels;
+  std::vector<bool> start_poses_far;
+  int idx_order = 0;
+
   for (auto &human : tracked_humans.humans) {
+    behind_path_vels_pos.push_back(-1);
+    if(std::find(req.ids.begin(),req.ids.end(),human.track_id)==req.ids.end()){
+      continue;
+    }
     bool path_exist = false;
     for (auto path_vel : behind_path_vels_) {
       if (path_vel.id == human.track_id) {
@@ -877,7 +932,6 @@ bool HumanPosePrediction::predictHumansGoal(
     std_srvs::Trigger g_srv;
     goal_change_srv_.call(g_srv);
 
-    if (!path_exist || g_srv.response.success) {
       // get human pose
       for (auto &segment : human.segments) {
         if (segment.type == default_human_part_) {
@@ -886,34 +940,40 @@ bool HumanPosePrediction::predictHumansGoal(
           human_start.header.stamp = now;
           human_start.pose = segment.pose.pose;
 
-          HumanStartPoseVel human_start_pose_vel = {
-              .id = human.track_id, .pose = human_start, .vel = segment.twist};
-          human_start_pose_vels.push_back(human_start_pose_vel);
+          tf::Pose start_pose_tf;
+          geometry_msgs::Pose start_pose_;
+          tf::poseMsgToTF(human_start.pose, start_pose_tf);
+          start_pose_tf = human_to_map_tf * start_pose_tf;
+          tf::poseTFToMsg(start_pose_tf, start_pose_);
+
+          if (!path_exist || g_srv.response.success) {
+            HumanStartPoseVel human_start_pose_vel = {
+                 .id = human.track_id, .pose = human_start, .vel = segment.twist};
+             human_start_pose_vels.push_back(human_start_pose_vel);
+             behind_path_vels_pos[human.track_id-1] = idx_order;
+          }
+          else{
+            if(behind_path_vels_.size()>=human.track_id && std::find(req.ids.begin(),req.ids.end(),human.track_id)!=req.ids.end()){
+            double dist_far = std::hypot(human_start.pose.position.x-behind_path_vels_[behind_path_vels_pos[human.track_id-1]].path.poses[0].pose.position.x,
+                                         human_start.pose.position.y-behind_path_vels_[behind_path_vels_pos[human.track_id-1]].path.poses[0].pose.position.y);
+
+            if(dist_far > 0.5){
+              start_poses_far.push_back(true);
+              HumanStartPoseVel human_start_pose_vel = {
+                  .id = human.track_id, .pose = human_start, .vel = segment.twist};
+              human_start_pose_vels.push_back(human_start_pose_vel);
+              behind_path_vels_pos[human.track_id-1] = idx_order;
+              behind_path_vels_.clear();
+            }
+           }
+          }
           break;
         }
       }
-    }
+      idx_order++;
   }
 
   if (!human_start_pose_vels.empty()) {
-    // get robot pose
-    tf::StampedTransform robot_to_map_tf, human_to_map_tf;
-    bool transforms_found = false;
-    try {
-      tf_.lookupTransform(map_frame_id_, robot_frame_id_, ros::Time::now(),
-                          robot_to_map_tf);
-      tf_.lookupTransform(map_frame_id_, tracked_humans.header.frame_id,
-                          ros::Time::now(), human_to_map_tf);
-      transforms_found = true;
-    } catch (tf::LookupException &ex) {
-      ROS_ERROR_NAMED(NODE_NAME, "No Transform available Error: %s\n",
-                      ex.what());
-    } catch (tf::ConnectivityException &ex) {
-      ROS_ERROR_NAMED(NODE_NAME, "Connectivity Error: %s\n", ex.what());
-    } catch (tf::ExtrapolationException &ex) {
-      ROS_ERROR_NAMED(NODE_NAME, "Extrapolation Error: %s\n", ex.what());
-    }
-
     if (transforms_found) {
       for (auto &human_start_pose_vel : human_start_pose_vels) {
         nav_msgs::GetPlan get_plan_srv;
@@ -1218,6 +1278,7 @@ bool HumanPosePrediction::resetExtPaths(std_srvs::Empty::Request &req,
   got_external_goal = false;
   last_predicted_poses_.clear();
   behind_path_vels_.clear();
+  check_path = false;
   return true;
 }
 

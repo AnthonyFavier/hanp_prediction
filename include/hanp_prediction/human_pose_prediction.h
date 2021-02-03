@@ -115,6 +115,7 @@ private:
   };
 
   hanp_msgs::TrackedHumans tracked_humans_;
+  // hanp_msgs::TrackedHumans static_humans_;
   hanp_msgs::HumanPathArray::ConstPtr external_paths_;
   hanp_prediction::PredictedGoal::ConstPtr predicted_goal_;
   hanp_msgs::HumanPathArray external_paths2_;
@@ -122,6 +123,7 @@ private:
   std::vector<hanp_prediction::HumanPose> external_goals_;
 
   std::vector<HumanPathVel> behind_path_vels_;
+  std::vector<int> behind_path_vels_pos;
   std::vector<hanp_prediction::PredictedPoses> last_predicted_poses_;
   std::map<uint64_t, size_t> last_prune_indices_;
   std::vector<double> velscale_scales_;
@@ -130,6 +132,8 @@ private:
       velobs_max_rad_, velobs_max_rad_time_;
   bool velobs_use_ang_;
   visualization_msgs::MarkerArray predicted_humans_markers_;
+  geometry_msgs::Transform behind_pose;
+  bool check_path;
 
   // std::vector<geometry_msgs::Point> human_goals;
   // std::vector<double> human_goals_x{1.5, 7.0, 9.0, 10.5, 1.5, 10.3, 8.5};
@@ -171,6 +175,8 @@ private:
   void externalTrajsCB(const hanp_msgs::HumanTrajectoryArrayConstPtr &traj_array);
 
   void predictedGoalCB(const hanp_prediction::PredictedGoal::ConstPtr& predicted_goal);
+
+  double checkdist(geometry_msgs::Pose human, geometry_msgs::Pose robot);
 
 
 
